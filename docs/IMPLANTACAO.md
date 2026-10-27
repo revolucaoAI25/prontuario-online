@@ -42,6 +42,19 @@ Pode ser feito por mim: me envie o backup (como da primeira vez, pelo Drive) e a
 O histórico importado aparece na agenda e no prontuário, mas **não gera lembretes nem nenhuma
 ação automática** — lembretes só nascem do que for registrado no sistema novo.
 
+### Sem acesso às portas do banco (5432/6543)
+
+Algumas redes (inclusive o ambiente onde o Claude trabalha) só saem pela porta 443. Nesse caso a
+importação e os arquivos SQL rodam pela **API de gerenciamento do Supabase**, por HTTPS:
+
+1. supabase.com → avatar → **Account preferences → Access Tokens → Generate new token**
+   (nome: `importacao`). Copie o `sbp_...` (aparece uma vez só).
+2. Rode com `SUPABASE_ACCESS_TOKEN=sbp_... SUPABASE_PROJECT_REF=<id do projeto>` no lugar de
+   `DATABASE_URL`:
+   - importação: `npm run migrate:fastclinic` (o mesmo script);
+   - um arquivo SQL: `node scripts/run-sql.mjs supabase/migrations/<arquivo>.sql`.
+3. Depois, apague o token em Access Tokens.
+
 ## 3. Primeiros logins
 
 Há dois níveis acima da equipe:

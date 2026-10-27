@@ -12,10 +12,11 @@
 import sql from 'mssql';
 import pg from 'pg';
 import { splitHistory } from './lib/fastclinic-history.mjs';
+import { SqlClient, managementApiRunner } from './lib/sql-over-http.mjs';
 
 pg.types.setTypeParser(1082, (v) => v);
 
-const BATCH = 1000;
+const BATCH = Number(process.env.MIGRATE_BATCH || 1000);
 const TODAY = new Date();
 
 const AGENDAS = {
@@ -433,7 +434,8 @@ async function importAppointments(ms, pgc, agendaIds) {
     `update appointments
      set status = 'cancelado', cancel_reason = 'Excluído no FastClinic', legacy_synced_at = now()
      where source = 'legado' and legacy_id <> all($1::int[]) and status <> 'cancelado' and starts_at > now()
-       and updated_at <= legacy_synced_at + interval '5 seconds'`,
+       and updated_at <= legacy_synced_at + interval '5 seconds'
+     returning id`,
     [exportIds],
   );
   await pgc.query(
@@ -452,10 +454,21 @@ async function importAppointments(ms, pgc, agendaIds) {
     [JSON.stringify(blocks)],
   );
 
-  return { source: recordset.length, appointments: appointments.length, ...counts, cancelados: removed.rowCount, blocks: blocks.length, unknownAgenda };
+  return { source: recordset.length, appointments: appointments.length, ...counts, cancelados: removed.rows.length, blocks: blocks.length, unknownAgenda };
 }
 
-async function main() {
+// DATABASE_URL (direct Postgres), or SUPABASE_ACCESS_TOKEN + SUPABASE_PROJECT_REF
+// to go through the Supabase Management API over HTTPS when port 5432/6543
+// is not reachable.
+function databaseClient() {
+  if (process.env.SUPABASE_ACCESS_TOKEN && process.env.SUPABASE_PROJECT_REF) {
+    return new SqlClient(managementApiRunner({ token: process.env.SUPABASE_ACCESS_TOKEN, projectRef: process.env.SUPABASE_PROJECT_REF }));
+  }
+  const isLocal = /@(localhost|127\.0\.0\.1)[:/]/.test(process.env.DATABASE_URL ?? '');
+  return new pg.Client({ connectionString: process.env.DATABASE_URL, ssl: isLocal ? false : { rejectUnauthorized: false } });
+}
+
+export async function main({ pgc = databaseClient() } = {}) {
   const ms = await sql.connect({
     server: process.env.MSSQL_HOST || 'localhost',
     port: Number(process.env.MSSQL_PORT || 1433),
@@ -465,8 +478,6 @@ async function main() {
     options: { trustServerCertificate: true, encrypt: false },
     requestTimeout: 600_000,
   });
-  const isLocal = /@(localhost|127\.0\.0\.1)[:/]/.test(process.env.DATABASE_URL ?? '');
-  const pgc = new pg.Client({ connectionString: process.env.DATABASE_URL, ssl: isLocal ? false : { rejectUnauthorized: false } });
   await pgc.connect();
   const started = Date.now();
   try {

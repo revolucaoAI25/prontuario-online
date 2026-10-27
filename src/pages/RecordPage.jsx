@@ -1,6 +1,6 @@
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, CalendarPlus, CircleDollarSign, Paperclip, Pencil, Trash2, UserPen, MessageCircle } from 'lucide-react';
+import { ArrowLeft, CalendarPlus, CircleDollarSign, Maximize2, Minimize2, Paperclip, Pencil, Trash2, UserPen, MessageCircle } from 'lucide-react';
 import { supabase, must } from '../lib/supabase.js';
 import { useLoad } from '../lib/hooks.js';
 import { useAuth } from '../context/AuthContext.jsx';
@@ -28,7 +28,7 @@ export function insertShortcut(value, selectionStart, selectionEnd, text) {
   return { value: prefix + text + after, caret: prefix.length + text.length };
 }
 
-function Composer({ patientId, shortcuts, onSaved }) {
+function Composer({ patientId, shortcuts, onSaved, focus, onToggleFocus }) {
   const toast = useToast();
   const ref = useRef(null);
   const [text, setText] = useState('');
@@ -84,6 +84,9 @@ function Composer({ patientId, shortcuts, onSaved }) {
         <div className="section-title" style={{ margin: 0 }}>Novo registro</div>
         <span className="grow" />
         <input className="input" type="date" value={date} onChange={(e) => setDate(e.target.value)} style={{ width: 160 }} aria-label="Data do registro" />
+        <button type="button" className="icon-btn" onClick={onToggleFocus} title={focus ? 'Sair da tela cheia (Esc)' : 'Tela cheia'} aria-label={focus ? 'Sair da tela cheia' : 'Tela cheia'}>
+          {focus ? <Minimize2 /> : <Maximize2 />}
+        </button>
       </div>
       <textarea
         ref={ref}
@@ -92,7 +95,7 @@ function Composer({ patientId, shortcuts, onSaved }) {
         onChange={(e) => setText(e.target.value)}
         onKeyDown={(e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) save(); }}
         placeholder="Escreva o que foi feito…"
-        style={{ minHeight: 96 }}
+        style={{ minHeight: focus ? '34vh' : 96 }}
         aria-label="Texto do registro"
       />
       <div className="shortcut-row">
@@ -195,6 +198,31 @@ export function RecordPage() {
   const { data: shortcuts = [] } = useLoad(() => must(supabase.from('note_shortcuts').select('*').eq('active', true).order('sort_order')), []);
   const { data: agendas = [] } = useLoad(loadAgendas, []);
 
+  // Full-screen notepad: only the record, the whole screen (Esc leaves).
+  const [focus, setFocus] = useState(false);
+  useEffect(() => {
+    document.body.classList.toggle('focus-mode', focus);
+    if (!focus) return undefined;
+    const onKey = (e) => {
+      if (e.key !== 'Escape') return;
+      if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {});
+      setFocus(false);
+    };
+    const onFullscreen = () => !document.fullscreenElement && setFocus(false);
+    window.addEventListener('keydown', onKey);
+    document.addEventListener('fullscreenchange', onFullscreen);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      document.removeEventListener('fullscreenchange', onFullscreen);
+      document.body.classList.remove('focus-mode');
+    };
+  }, [focus]);
+  function toggleFocus() {
+    if (!focus) document.documentElement.requestFullscreen?.().catch(() => {});
+    else if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {});
+    setFocus(!focus);
+  }
+
   const patient = patientLoad.data;
   const entries = entriesLoad.data ?? [];
   const shown = useMemo(() => (filter.trim() ? entries.filter((e) => norm(e.content).includes(norm(filter.trim()))) : entries), [entries, filter]);
@@ -227,9 +255,9 @@ export function RecordPage() {
         </div>
       </div>
 
-      <div className="record-layout">
+      <div className={`record-layout ${focus ? 'focus' : ''}`}>
         <div className="card" style={{ display: 'flex', flexDirection: 'column', minHeight: 0 }}>
-          <Composer patientId={patientId} shortcuts={shortcuts} onSaved={entriesLoad.reload} />
+          <Composer patientId={patientId} shortcuts={shortcuts} onSaved={entriesLoad.reload} focus={focus} onToggleFocus={toggleFocus} />
           <div className="row" style={{ padding: '10px 18px 0' }}>
             <div className="section-title" style={{ margin: 0 }}>Prontuário · {entries.length} registros</div>
             <span className="grow" />

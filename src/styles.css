@@ -549,3 +549,11 @@ input[type='checkbox'], input[type='radio'] { accent-color: var(--brand); width:
 .splash { height: 100%; display: flex; align-items: center; justify-content: center; background: var(--bg); }
 .splash img { width: 72px; opacity: 0.85; animation: breathe 1.6s ease-in-out infinite; }
 @keyframes breathe { 50% { opacity: 0.35; transform: scale(0.97); } }
+
+/* Full-screen notepad in the record */
+body.focus-mode .rail { display: none; }
+body.focus-mode .main { padding: 16px max(24px, calc((100vw - 1100px) / 2)); }
+body.focus-mode .record-head { padding: 10px 16px; margin-bottom: 12px; }
+body.focus-mode .record-head .avatar.lg { width: 40px; height: 40px; font-size: 14px; }
+.record-layout.focus { grid-template-columns: minmax(0, 1fr); }
+.record-layout.focus > .stack.scroll { display: none; }
