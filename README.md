@@ -49,11 +49,16 @@ O passo a passo detalhado (com onde achar cada chave) está em
    atualiza só isso, não mexe no que já foi editado no sistema novo, mantém os horários das agendas
    já configurados e cancela agendamentos futuros excluídos no FastClinic.
 
-### 3. Primeiro administrador
+### 3. Primeiros logins
 ```bash
 SUPABASE_URL=... SUPABASE_SERVICE_ROLE_KEY=... DATABASE_URL=... \
   node scripts/create-admin.mjs "Dr. Everson Rezeck" email@exemplo.com "senha-forte" "Dr. Everson Rezeck"
+SUPABASE_URL=... SUPABASE_SERVICE_ROLE_KEY=... DATABASE_URL=... \
+  node scripts/create-admin.mjs "Suporte" voce@agencia.com "senha-forte" --super
 ```
+- **Super admin** (`--super`, a agência): tudo, inclusive webhooks e API (Ajustes → Integrações).
+- **Administrador** (a clínica): tudo, menos as integrações; não altera o login do super admin.
+(Também dá para fazer pelo painel do Supabase: veja `docs/IMPLANTACAO.md`, passo 3.)
 Os demais logins (secretárias, profissionais) são criados em **Ajustes → Usuários**.
 
 ### 4. Vercel
@@ -61,11 +66,12 @@ Os demais logins (secretárias, profissionais) são criados em **Ajustes → Usu
 2. Cadastre as variáveis de `.env.example` em *Settings → Environment Variables*.
    Use o **Transaction pooler** (porta 6543) no `DATABASE_URL`.
 
-### 5. Integrações (no sistema, em Ajustes → Lembretes e integrações)
-- **Webhook dos lembretes** e **webhook de aniversário**: URLs (n8n, Chatflux…) que recebem um
-  `POST` por envio, uma vez por dia. Formato do JSON abaixo.
+### 5. Integrações
+- **Webhook dos lembretes** e **webhook de aniversário** (Ajustes → Integrações, só super admin):
+  URLs (n8n, Chatflux…) que recebem um `POST` por envio, uma vez por dia. Formato do JSON abaixo.
 - **WhatsApp (Evolution API)**: com `EVOLUTION_API_URL`/`EVOLUTION_API_KEY` definidos, o botão
-  **Conectar** cria a instância da clínica, configura o webhook e mostra o QR Code. Pode ser o mesmo
+  **Conectar** na tela WhatsApp (qualquer usuário) cria a instância da clínica, configura o webhook
+  e mostra o QR Code; desconectar é só para administrador. Pode ser o mesmo
   servidor Evolution de outro projeto (instância separada). Na tela **WhatsApp** a equipe vê as
   conversas e envia texto, fotos, vídeos, documentos e áudios pelo número da clínica. Os arquivos
   recebidos são copiados para o Storage (pasta `whatsapp/` do bucket `prontuario`).

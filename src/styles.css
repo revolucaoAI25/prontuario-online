@@ -383,3 +383,7 @@ a { color: var(--brand); }
 .wa-recording { display: flex; align-items: center; gap: 8px; font-weight: 700; color: var(--danger); height: 40px; }
 .rec-dot { width: 10px; height: 10px; border-radius: 99px; background: var(--danger); animation: rec-pulse 1s infinite; }
 @keyframes rec-pulse { 50% { opacity: 0.3; } }
+.wa-conn { gap: 7px; }
+.wa-conn .dot { width: 9px; height: 9px; border-radius: 99px; background: var(--danger); }
+.wa-conn.on .dot { background: #2fa36b; }
+.wa-conn.off { border-color: var(--danger); color: var(--danger); }

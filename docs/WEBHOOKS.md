@@ -2,7 +2,7 @@
 
 Todo dia às 9h (horário de Brasília) o sistema manda um `POST` com JSON para cada lembrete de
 retorno vencido e para cada aniversariante do dia, nas URLs configuradas em
-**Ajustes → Lembretes e integrações**. É ali que o fluxo (n8n, Chatflux…) decide o texto e envia
+**Ajustes → Integrações** (visível só para o super admin). É ali que o fluxo (n8n, Chatflux…) decide o texto e envia
 a mensagem.
 
 - Uma chamada por lembrete/aniversariante. Responder qualquer `2xx` marca como enviado.

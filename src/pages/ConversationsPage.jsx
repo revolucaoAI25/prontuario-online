@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
-  AlertCircle, Check, CheckCheck, Clock, Download, FileText, Mic, MessageCirclePlus, Paperclip, RotateCw, Search, Send, Square, Trash2, X,
+  AlertCircle, Check, CheckCheck, Clock, Download, FileText, Mic, MessageCirclePlus, Paperclip, QrCode, RotateCw, Search, Send, Square, Trash2, X,
 } from 'lucide-react';
 import { supabase, must, callApi } from '../lib/supabase.js';
 import { useInterval, useLoad } from '../lib/hooks.js';
 import { formatDay, localDay, localTime } from '../lib/time.js';
 import { useToast } from '../context/ToastContext.jsx';
-import { Avatar, Empty } from '../components/ui.jsx';
+import { Avatar, Empty, Modal } from '../components/ui.jsx';
+import { WhatsAppConnection } from '../components/WhatsAppConnection.jsx';
 import { PatientPicker } from '../components/PatientPicker.jsx';
 
 const BUCKET = 'prontuario';
@@ -161,6 +162,12 @@ export function ConversationsPage() {
   const threadRef = useRef(null);
   const fileInput = useRef(null);
   const recorder = useRecorder();
+  const [connection, setConnection] = useState(null);
+  const [showConnection, setShowConnection] = useState(false);
+  const checkConnection = useCallback(() => callApi('whatsapp/status').then(setConnection).catch(() => setConnection(null)), []);
+  useEffect(() => { checkConnection(); }, [checkConnection]);
+  useInterval(checkConnection, 60000);
+  const connected = connection?.estado === 'open';
 
   const { data: conversations = [], reload } = useLoad(
     () => must(supabase.from('whatsapp_conversations').select('*').order('last_at', { ascending: false }).limit(300)),
@@ -317,9 +324,25 @@ export function ConversationsPage() {
         </div>
         <div className="topbar-right">
           <div className="search"><Search /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Buscar conversa" /></div>
+          {connection?.configurado && (
+            <button type="button" className={`btn wa-conn ${connected ? 'on' : 'off'}`} onClick={() => setShowConnection(true)} title="Conexão do WhatsApp">
+              <span className="dot" /> {connected ? 'Conectado' : 'Desconectado'}
+            </button>
+          )}
           <button type="button" className="btn btn-primary" onClick={() => setPicking((v) => !v)}><MessageCirclePlus /> Nova conversa</button>
         </div>
       </header>
+      {connection?.configurado && !connected && (
+        <div className="banner row" style={{ marginBottom: 12 }}>
+          <span className="grow">O WhatsApp da clínica está desconectado. Mensagens novas não chegam nem saem até conectar de novo.</span>
+          <button type="button" className="btn btn-sm btn-primary" onClick={() => setShowConnection(true)}><QrCode /> Conectar</button>
+        </div>
+      )}
+      {showConnection && (
+        <Modal title="Conexão do WhatsApp" onClose={() => { setShowConnection(false); checkConnection(); }}>
+          <WhatsAppConnection onStatus={setConnection} autoConnect={!connected} />
+        </Modal>
+      )}
       {picking && (
         <div className="card card-pad" style={{ marginBottom: 12 }}>
           <div className="row" style={{ marginBottom: 8 }}>

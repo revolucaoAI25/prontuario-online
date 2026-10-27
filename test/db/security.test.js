@@ -160,3 +160,23 @@ test('WhatsApp numbers match patients with or without country code and 9th digit
   }
   assert.equal((await one(db, `select match_patient_by_phone('5511977774321') as id`)).id, null, 'other DDD');
 });
+
+test('webhooks are visible and editable only by the super admin; admins cannot touch a super admin', async () => {
+  const support = await createStaff(db, { name: 'Suporte Agencia', role: 'admin' });
+  await db.query(`update staff set is_superadmin = true where id = $1`, [support]);
+
+  const adminKeys = await asUser(db, admin, async () => (await db.query(`select key from settings order by key`)).rows.map((r) => r.key));
+  assert.ok(adminKeys.includes('default_reminder_months'));
+  assert.ok(!adminKeys.includes('reminder_webhook_url') && !adminKeys.includes('birthday_webhook_url'), 'admin does not even see the webhooks');
+  const changed = await asUser(db, admin, async () => (await db.query(`update settings set value = '"https://evil"' where key = 'reminder_webhook_url'`)).rowCount);
+  assert.equal(changed, 0);
+  assert.equal(await asUser(db, admin, async () => (await db.query(`update settings set value = '5' where key = 'default_reminder_months'`)).rowCount), 1);
+
+  assert.equal(await asUser(db, support, async () => (await db.query(`update settings set value = '"https://n8n.exemplo/lembrete"' where key = 'reminder_webhook_url'`)).rowCount), 1);
+  assert.equal((await one(db, `select setting_text('reminder_webhook_url') as v`)).v, 'https://n8n.exemplo/lembrete');
+
+  assert.equal(await asUser(db, admin, async () => (await db.query(`update staff set role = 'secretaria', is_superadmin = false where id = $1`, [support])).rowCount), 0);
+  await expectDbError(asUser(db, admin, () => db.query(`update staff set is_superadmin = true where id = $1`, [admin])), 'row-level security');
+  assert.equal(await asUser(db, support, async () => (await db.query(`update staff set full_name = 'Suporte' where id = $1`, [support])).rowCount), 1);
+  await expectDbError(db.query(`update staff set is_superadmin = true where id = $1`, [secretaria]), 'staff_superadmin_is_admin');
+});

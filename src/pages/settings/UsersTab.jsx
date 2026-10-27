@@ -4,19 +4,25 @@ import { callApi, supabase, must } from '../../lib/supabase.js';
 import { useLoad } from '../../lib/hooks.js';
 import { useToast } from '../../context/ToastContext.jsx';
 import { ROLE_LABEL } from '../../lib/format.js';
+import { useAuth } from '../../context/AuthContext.jsx';
 import { Empty, Field, Modal } from '../../components/ui.jsx';
+
+const roleLabel = (u) => (u.is_superadmin ? 'Super admin (suporte)' : ROLE_LABEL[u.role]);
 
 function UserModal({ user, agendas, onClose, onSaved }) {
   const toast = useToast();
+  const { isSuperAdmin } = useAuth();
   const [form, setForm] = useState({
     nome: user?.full_name ?? '', email: user?.email ?? '', senha: '', papel: user?.role ?? 'secretaria', agenda_id: user?.agenda_id ?? '',
+    super_admin: Boolean(user?.is_superadmin),
   });
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
 
   async function save() {
     try {
-      if (user) await callApi('admin/atualizar_usuario', { id: user.id, nome: form.nome, papel: form.papel, agenda_id: form.agenda_id || null });
-      else await callApi('admin/criar_usuario', form);
+      const superAdmin = isSuperAdmin ? { super_admin: form.papel === 'admin' && form.super_admin } : {};
+      if (user) await callApi('admin/atualizar_usuario', { id: user.id, nome: form.nome, papel: form.papel, agenda_id: form.agenda_id || null, ...superAdmin });
+      else await callApi('admin/criar_usuario', { ...form, ...superAdmin });
       toast.info(user ? 'Usuário atualizado.' : 'Usuário criado. Passe o e-mail e a senha para a pessoa.');
       onSaved();
     } catch (error) {
@@ -37,6 +43,12 @@ function UserModal({ user, agendas, onClose, onSaved }) {
           {Object.entries(ROLE_LABEL).map(([id, label]) => <option key={id} value={id}>{label}</option>)}
         </select>
       </Field>
+      {isSuperAdmin && form.papel === 'admin' && (
+        <label className="row small" style={{ gap: 8, marginBottom: 12 }}>
+          <input type="checkbox" checked={form.super_admin} onChange={(e) => setForm({ ...form, super_admin: e.target.checked })} />
+          Super admin (suporte técnico: também configura webhooks, WhatsApp e API)
+        </label>
+      )}
       <Field label="Agenda própria" hint="Profissionais veem o grupo da equipe da sua agenda.">
         <select className="select" value={form.agenda_id} onChange={set('agenda_id')}>
           <option value="">—</option>
@@ -49,6 +61,7 @@ function UserModal({ user, agendas, onClose, onSaved }) {
 
 export function UsersTab() {
   const toast = useToast();
+  const { isSuperAdmin } = useAuth();
   const [editing, setEditing] = useState(null);
   const { data, reload, error } = useLoad(() => callApi('admin/usuarios'), []);
   const { data: agendas = [] } = useLoad(() => must(supabase.from('agendas').select('id, name').eq('active', true).order('sort_order')), []);
@@ -89,14 +102,16 @@ export function UsersTab() {
             <tr key={u.id} style={{ opacity: u.active ? 1 : 0.5 }}>
               <td style={{ fontWeight: 700 }}>{u.full_name}</td>
               <td>{u.email}</td>
-              <td>{ROLE_LABEL[u.role]}</td>
+              <td>{roleLabel(u)}</td>
               <td>{u.agenda_name ?? '—'}</td>
               <td>
+                {u.is_superadmin && !isSuperAdmin ? <span className="small muted">Login do suporte técnico</span> : (
                 <div className="row">
                   <button type="button" className="btn btn-sm" onClick={() => setEditing(u)}>Editar</button>
                   <button type="button" className="btn btn-sm" onClick={() => resetPassword(u)}><KeyRound /> Senha</button>
                   <button type="button" className="btn btn-sm btn-ghost" onClick={() => toggle(u)}>{u.active ? 'Desativar' : 'Reativar'}</button>
                 </div>
+                )}
               </td>
             </tr>
           ))}

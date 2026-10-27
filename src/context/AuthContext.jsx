@@ -31,6 +31,7 @@ export function AuthProvider({ children }) {
     staff,
     loading: session === undefined || staffLoading,
     isAdmin: staff?.role === 'admin',
+    isSuperAdmin: staff?.role === 'admin' && Boolean(staff?.is_superadmin),
     signIn: (email, password) => supabase.auth.signInWithPassword({ email, password }),
     signOut: () => supabase.auth.signOut(),
   };

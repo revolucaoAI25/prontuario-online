@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { QrCode, RefreshCw, Unplug } from 'lucide-react';
-import { callApi } from '../../lib/supabase.js';
-import { useToast } from '../../context/ToastContext.jsx';
+import { callApi } from '../lib/supabase.js';
+import { useToast } from '../context/ToastContext.jsx';
+import { useAuth } from '../context/AuthContext.jsx';
 
 const STATE_LABEL = {
   open: ['Conectado', 'ok'],
@@ -12,8 +13,10 @@ const STATE_LABEL = {
 
 // Connect the clinic's WhatsApp to the Evolution API from inside the app:
 // shows the QR code (refreshed while waiting) and the connection status.
-export function WhatsAppConnection() {
+// Anyone on the team can reconnect; only an admin can disconnect.
+export function WhatsAppConnection({ onStatus, autoConnect = false }) {
   const toast = useToast();
+  const { isAdmin } = useAuth();
   const [status, setStatus] = useState(null);
   const [qr, setQr] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -21,8 +24,9 @@ export function WhatsAppConnection() {
 
   async function refreshStatus() {
     try {
-      const s = await callApi('admin/whatsapp_status');
+      const s = await callApi('whatsapp/status');
       setStatus(s);
+      onStatus?.(s);
       if (s.estado === 'open') setQr(null);
       return s;
     } catch (error) {
@@ -34,11 +38,11 @@ export function WhatsAppConnection() {
   async function connect() {
     setBusy(true);
     try {
-      const r = await callApi('admin/whatsapp_conectar');
+      const r = await callApi('whatsapp/conectar');
       qrAt.current = Date.now();
       if (r.estado === 'open') {
         setQr(null);
-        toast.info('WhatsApp conectado e webhook atualizado.');
+        toast.info('O WhatsApp já está conectado.');
       } else {
         setQr({ image: r.qrcode, code: r.codigo_pareamento });
       }
@@ -54,14 +58,18 @@ export function WhatsAppConnection() {
     // eslint-disable-next-line no-alert
     if (!window.confirm('Desconectar o WhatsApp da clínica? As conversas param de aparecer no sistema até conectar de novo.')) return;
     try {
-      await callApi('admin/whatsapp_desconectar');
+      await callApi('whatsapp/desconectar');
       await refreshStatus();
     } catch (error) {
       toast.error(error);
     }
   }
 
-  useEffect(() => { refreshStatus(); }, []);
+  useEffect(() => {
+    refreshStatus().then((s) => {
+      if (autoConnect && s?.configurado && s.estado !== 'open') connect();
+    });
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // While a QR code is on screen: poll the status, and fetch a fresh code
   // before the current one expires (~40 s).
@@ -81,13 +89,12 @@ export function WhatsAppConnection() {
   const [label, tone] = STATE_LABEL[status?.estado] ?? ['—', ''];
 
   return (
-    <div className="card card-pad">
-      <div className="section-title">WhatsApp da clínica (Evolution API)</div>
+    <div>
       {!status && <div className="small muted">Verificando…</div>}
       {status?.erro && <div className="banner">{status.erro}</div>}
       {status?.configurado === false && (
         <div className="banner">
-          Falta configurar o servidor da Evolution: defina <code>EVOLUTION_API_URL</code> e <code>EVOLUTION_API_KEY</code> nas variáveis da Vercel.
+          O servidor do WhatsApp ainda não foi configurado. Fale com o suporte técnico.
         </div>
       )}
       {status?.configurado && (
@@ -100,9 +107,9 @@ export function WhatsAppConnection() {
           </div>
           <div className="row-wrap">
             <button type="button" className="btn btn-primary" disabled={busy} onClick={connect}>
-              <QrCode /> {status.estado === 'open' ? 'Reaplicar configuração' : 'Conectar (mostrar QR Code)'}
+              <QrCode /> {status.estado === 'open' ? 'Verificar conexão' : 'Conectar (mostrar QR Code)'}
             </button>
-            {status.estado === 'open' && <button type="button" className="btn btn-danger" onClick={disconnect}><Unplug /> Desconectar</button>}
+            {status.estado === 'open' && isAdmin && <button type="button" className="btn btn-danger" onClick={disconnect}><Unplug /> Desconectar</button>}
           </div>
           {qr && (
             <div className="stack" style={{ alignItems: 'center', padding: 10 }}>
@@ -113,9 +120,6 @@ export function WhatsAppConnection() {
               </div>
             </div>
           )}
-          <div className="small muted">
-            As conversas aparecem em “WhatsApp”, só para leitura. Respostas continuam pelo próprio WhatsApp.
-          </div>
         </div>
       )}
     </div>

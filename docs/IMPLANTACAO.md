@@ -39,14 +39,31 @@ Pode ser feito por mim: me envie o backup (como da primeira vez, pelo Drive) e a
 O histórico importado aparece na agenda e no prontuário, mas **não gera lembretes nem nenhuma
 ação automática** — lembretes só nascem do que for registrado no sistema novo.
 
-## 3. Primeiro login (administrador)
+## 3. Primeiros logins
 
-Rodado uma vez (eu faço junto com a importação):
-```bash
-node scripts/create-admin.mjs "Dr. Everson Rezeck" email-do-everson "senha-inicial" "Dr. Everson Rezeck"
-```
-Crie também um login de administrador para você (agência), para acessar de fora da clínica:
-mesmo comando com seu nome e e-mail, sem o último argumento.
+Há dois níveis acima da equipe:
+
+| Login | Quem | O que pode |
+|---|---|---|
+| **Super admin** | você (agência/suporte) | tudo, inclusive **Ajustes → Integrações** (webhooks e API) e editar outros super admins |
+| **Administrador** | Dr. Everson | tudo na clínica (financeiro, usuários, agendas, procedimentos, lembretes), **sem** ver nem mexer nos webhooks; não consegue alterar o login do suporte |
+
+Pelo painel do Supabase, sem precisar de chaves:
+1. **Authentication → Users → Add user → Create new user**: e-mail e senha, marque
+   **Auto Confirm User**. Faça um para você e um para o Dr. Everson.
+2. **SQL Editor**, trocando os e-mails:
+   ```sql
+   -- você: super admin
+   insert into staff (id, full_name, role, is_superadmin)
+   select id, 'Suporte (agência)', 'admin', true from auth.users where email = 'SEU-EMAIL';
+
+   -- Dr. Everson: administrador, dono da agenda dele
+   insert into staff (id, full_name, role, agenda_id)
+   select u.id, 'Dr. Everson Rezeck', 'admin', (select id from agendas where name = 'Dr. Everson Rezeck')
+   from auth.users u where u.email = 'EMAIL-DO-EVERSON';
+   ```
+(Ou pela linha de comando: `node scripts/create-admin.mjs "Nome" email senha [agenda] [--super]`.)
+
 Os demais logins (secretárias, Simone, estética) são criados **dentro do sistema** em
 **Ajustes → Usuários**.
 
@@ -82,8 +99,10 @@ Os demais logins (secretárias, Simone, estética) são criados **dentro do sist
 Use o **mesmo servidor Evolution** que você já tem, com uma **instância nova** (cada instância é
 um número, com webhook próprio — não interfere no outro projeto).
 
-1. No sistema: **Ajustes → Lembretes e integrações → WhatsApp da clínica → Conectar (mostrar QR
-   Code)**. O sistema cria a instância `clinica-rezeck` e já aponta o webhook para ele.
+1. No sistema, tela **WhatsApp** → botão **Desconectado / Conectar** no topo. O sistema cria a
+   instância `clinica-rezeck`, aponta o webhook para ele e mostra o QR Code. **Qualquer pessoa da
+   equipe** pode fazer isso (se o WhatsApp cair, a recepção mesma reconecta); desconectar é só
+   para administrador.
 2. No celular da clínica: WhatsApp → **Aparelhos conectados → Conectar um aparelho** → leia o QR.
    O status muda para **Conectado**.
 3. Mande uma mensagem de teste para o número da clínica: ela aparece em **WhatsApp** no menu.
@@ -97,7 +116,7 @@ QR Code; nesse caso o espelho precisa ser feito pelo provedor oficial.
 
 ## 6. Lembretes, aniversários e API de agendamento
 
-1. **Ajustes → Lembretes e integrações**: preencha
+1. **Ajustes → Integrações** (só aparece para o super admin): preencha
    - **Webhook dos lembretes**: URL do fluxo (n8n/Chatflux) que manda a mensagem de retorno;
    - **Webhook de aniversário**: URL do fluxo de parabéns;
    e salve. O JSON que chega (paciente, procedimento, última vez, data prevista, atendimento de

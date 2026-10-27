@@ -72,10 +72,12 @@ before(async () => {
   await db.query(`
     insert into auth.users (id, email, encrypted_password) values
       ('00000000-0000-0000-0000-0000000000a1', 'admin@t.dev', extensions.crypt('senha123', extensions.gen_salt('bf'))),
-      ('00000000-0000-0000-0000-0000000000a2', 'rec@t.dev', extensions.crypt('senha123', extensions.gen_salt('bf')));
-    insert into staff (id, full_name, role) values
-      ('00000000-0000-0000-0000-0000000000a1', 'Admin', 'admin'),
-      ('00000000-0000-0000-0000-0000000000a2', 'Recepção', 'secretaria');`);
+      ('00000000-0000-0000-0000-0000000000a2', 'rec@t.dev', extensions.crypt('senha123', extensions.gen_salt('bf'))),
+      ('00000000-0000-0000-0000-0000000000a3', 'suporte@t.dev', extensions.crypt('senha123', extensions.gen_salt('bf')));
+    insert into staff (id, full_name, role, is_superadmin) values
+      ('00000000-0000-0000-0000-0000000000a1', 'Admin', 'admin', false),
+      ('00000000-0000-0000-0000-0000000000a2', 'Recepção', 'secretaria', false),
+      ('00000000-0000-0000-0000-0000000000a3', 'Suporte', 'admin', true);`);
   emulator = createEmulator({ databaseUrl: TEST_DATABASE_URL, postgrestUrl: 'http://localhost:1', storageDir }).listen(0);
   authUrl = `http://localhost:${emulator.address().port}`;
   process.env.SUPABASE_URL = authUrl;
@@ -115,7 +117,7 @@ test('only a logged-in admin can manage users', async () => {
   assert.equal((await call('usuarios', {}, await login('rec@t.dev'))).status, 403);
   const { status, body } = await call('usuarios', {}, await login('admin@t.dev'));
   assert.equal(status, 200);
-  assert.deepEqual(body.usuarios.map((u) => [u.full_name, u.email]).sort(), [['Admin', 'admin@t.dev'], ['Recepção', 'rec@t.dev']]);
+  assert.deepEqual(body.usuarios.map((u) => [u.full_name, u.email]).sort(), [['Admin', 'admin@t.dev'], ['Recepção', 'rec@t.dev'], ['Suporte', 'suporte@t.dev']]);
 });
 
 test('admin creates a login that works, and can reset its password', async () => {
@@ -144,35 +146,60 @@ test('admin cannot remove their own admin access; can deactivate others', async 
   assert.equal((await call('usuarios', {}, await login('rec@t.dev'))).status, 403, 'deactivated staff lose access');
 });
 
-test('WhatsApp panel: creates the instance with our webhook, shows the QR, tracks status', async () => {
+test('the clinic admin cannot edit the support login, create a super admin, or open the WhatsApp panel', async () => {
   const admin = await login('admin@t.dev');
-  let status = await call('whatsapp_status', {}, admin);
+  const support = '00000000-0000-0000-0000-0000000000a3';
+  assert.equal((await call('atualizar_usuario', { id: support, papel: 'secretaria' }, admin)).status, 403);
+  assert.equal((await call('redefinir_senha', { id: support, senha: 'trocada123' }, admin)).status, 403);
+  assert.equal((await call('criar_usuario', { nome: 'X', email: 'x@t.dev', senha: 'senhaforte1', papel: 'admin', super_admin: true }, admin)).status, 403);
+
+  const superToken = await login('suporte@t.dev');
+  const created = await call('criar_usuario', { nome: 'Dev 2', email: 'dev2@t.dev', senha: 'senhaforte1', papel: 'admin', super_admin: true }, superToken);
+  assert.equal(created.body.usuario.is_superadmin, true);
+  assert.equal((await call('atualizar_usuario', { id: support, super_admin: false }, superToken)).body.erro.codigo, 'operacao_invalida', 'cannot drop own super admin');
+});
+
+const wa = async (action, body, token) => {
+  const res = await fetch(base.replace('/admin', `/whatsapp/${action}`), {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) },
+    body: JSON.stringify(body ?? {}),
+  });
+  return { status: res.status, body: await res.json() };
+};
+
+test('WhatsApp connection: anyone on the team can show the QR and reconnect; only an admin disconnects', async () => {
+  await db.query(`update staff set active = true where id = '00000000-0000-0000-0000-0000000000a2'`);
+  const admin = await login('rec@t.dev');
+  let status = await wa('status', {}, admin);
   assert.deepEqual(status.body, { ok: true, configurado: true, instancia: 'clinica-teste', existe: false, estado: 'inexistente' });
 
-  const connect = await call('whatsapp_conectar', {}, admin);
+  const connect = await wa('conectar', {}, admin);
   assert.equal(connect.body.qrcode, 'data:image/png;base64,QR1');
   assert.equal(connect.body.codigo_pareamento, 'ABCD1234');
   const created = evo.instances.get('clinica-teste');
   assert.match(created.webhook.url, /\/api\/webhooks\/evolution\?secret=segredo-webhook$/);
   assert.deepEqual(created.webhook.events, ['MESSAGES_UPSERT', 'SEND_MESSAGE', 'MESSAGES_UPDATE']);
 
-  const again = await call('whatsapp_conectar', {}, admin);
+  const again = await wa('conectar', {}, admin);
   assert.equal(again.body.qrcode, 'data:image/png;base64,QR2', 'existing instance: fresh QR, webhook re-applied');
   assert.ok(evo.calls.some((c) => c.url === '/webhook/set/clinica-teste'));
 
   created.state = 'open';
-  status = await call('whatsapp_status', {}, admin);
+  status = await wa('status', {}, admin);
   assert.equal(status.body.estado, 'open');
-  assert.equal((await call('whatsapp_conectar', {}, admin)).body.estado, 'open');
+  assert.equal((await wa('conectar', {}, admin)).body.estado, 'open');
 
-  await call('whatsapp_desconectar', {}, admin);
+  assert.equal((await wa('desconectar', {}, admin)).status, 403, 'reception cannot disconnect');
+  assert.equal(created.state, 'open');
+  await wa('desconectar', {}, await login('admin@t.dev'));
   assert.equal(created.state, 'close');
 });
 
-test('WhatsApp panel: admin only, and a wrong Evolution key is explained', async () => {
-  assert.equal((await call('whatsapp_status', {}, await login('amanda@t.dev', 'novasenha99'))).status, 403);
+test('WhatsApp connection: needs a login, and a wrong Evolution key is explained', async () => {
+  assert.equal((await wa('status', {})).status, 401);
   process.env.EVOLUTION_API_KEY = 'errada';
-  const res = await call('whatsapp_status', {}, await login('admin@t.dev'));
+  const res = await wa('status', {}, await login('rec@t.dev'));
   assert.equal(res.body.erro.codigo, 'evolution_chave_invalida');
   process.env.EVOLUTION_API_KEY = 'chave-global';
 });
