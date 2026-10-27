@@ -1,0 +1,42 @@
+import { timingSafeEqual } from 'node:crypto';
+import { storeEvolutionEvent } from '../../server/evolution.js';
+
+function secretMatches(given, expected) {
+  if (!given || !expected) return false;
+  const a = Buffer.from(String(given));
+  const b = Buffer.from(expected);
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
+async function readJson(req) {
+  if (req.body !== undefined) return typeof req.body === 'string' ? JSON.parse(req.body) : req.body;
+  const chunks = [];
+  for await (const chunk of req) chunks.push(chunk);
+  return JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}');
+}
+
+// Configure in the Evolution instance: webhook URL
+//   https://<domain>/api/webhooks/evolution?secret=<EVOLUTION_WEBHOOK_SECRET>
+// with the MESSAGES_UPSERT (and optionally SEND_MESSAGE) events.
+export default async function handler(req, res) {
+  res.setHeader('Content-Type', 'application/json; charset=utf-8');
+  const url = new URL(req.url, 'http://localhost');
+  const given = url.searchParams.get('secret') ?? req.headers['x-webhook-secret'];
+  if (!secretMatches(given, process.env.EVOLUTION_WEBHOOK_SECRET)) {
+    res.statusCode = 401;
+    return res.end(JSON.stringify({ ok: false }));
+  }
+  if (req.method !== 'POST') {
+    res.statusCode = 405;
+    return res.end(JSON.stringify({ ok: false }));
+  }
+  try {
+    const result = await storeEvolutionEvent(await readJson(req));
+    res.statusCode = 200;
+    res.end(JSON.stringify({ ok: true, ...result }));
+  } catch (error) {
+    console.error(error);
+    res.statusCode = error instanceof SyntaxError ? 400 : 500;
+    res.end(JSON.stringify({ ok: false }));
+  }
+}

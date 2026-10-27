@@ -1,0 +1,12 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": "vite",
+  "buildCommand": "vite build",
+  "outputDirectory": "dist",
+  "regions": ["gru1"],
+  "rewrites": [{ "source": "/((?!api/).*)", "destination": "/index.html" }],
+  "crons": [{ "path": "/api/cron/disparos", "schedule": "0 12 * * *" }],
+  "functions": {
+    "api/cron/disparos.js": { "maxDuration": 60 }
+  }
+}

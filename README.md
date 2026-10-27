@@ -1,0 +1,101 @@
+# Clínica Rezeck — agenda e prontuário
+
+Sistema da Clínica Dr. Everson Rezeck: agenda com 4 agendas (Dr. Everson, Simone, Estética,
+Depilação a laser), prontuário, pacientes, financeiro (só administrador), estoque, comunicação
+interna da equipe, espelho do WhatsApp (Evolution API), lembretes de retorno por procedimento,
+aniversários e uma API de agendamento para integrações (IA/WhatsApp).
+
+- **Supabase**: banco Postgres, login, permissões (RLS), realtime e arquivos do prontuário.
+- **Vercel**: o app (React + Vite) e as funções em `/api` (API de agendamento, webhook da Evolution,
+  disparo diário de lembretes e aniversários).
+- Documentação da API: [`docs/API.md`](docs/API.md).
+
+## Estrutura
+
+| Pasta | O que tem |
+|---|---|
+| `supabase/migrations` | Schema, regras de agenda e lembretes, permissões (aplicar em ordem) |
+| `supabase/seed.sql` | Agendas, tipos de atendimento, procedimentos e atalhos iniciais |
+| `src/` | App web |
+| `api/`, `server/` | Funções da Vercel e a lógica compartilhada |
+| `scripts/` | Migração do FastClinic, criação do primeiro admin, banco local |
+| `dev/` | Ambiente local que imita o Supabase (só para desenvolvimento/testes) |
+| `test/` | Testes do banco, da API, dos webhooks e da migração |
+
+## Implantação
+
+### 1. Supabase
+1. Crie o projeto na região **São Paulo (sa-east-1)**.
+2. Aplique as migrações em ordem (Supabase CLI: `supabase link` e `supabase db push`, ou cole
+   cada arquivo de `supabase/migrations` no SQL Editor) e depois `supabase/seed.sql`.
+3. Em **Authentication → Sign In / Providers → Email**, desligue *Allow new users to sign up*
+   (os logins são criados pelo administrador dentro do sistema).
+
+### 2. Dados do FastClinic
+1. Restaure o `.bak` num SQL Server temporário:
+   `scripts/restore_fastclinic_backup.sh /caminho/clinica.bak` (precisa de Docker).
+2. Rode a migração apontando para a conexão **direta** do Supabase (porta 5432):
+   ```bash
+   MSSQL_PASSWORD='Prontuario#2026!' DATABASE_URL='postgresql://postgres:SENHA@db.SEU-PROJETO.supabase.co:5432/postgres' \
+     npm run migrate:fastclinic
+   ```
+   Importa horários de atendimento (inclusive os horários "quebrados"), pacientes, prontuários,
+   histórico de agendamentos com procedimentos, e bloqueios futuros. Leva menos de 1 minuto.
+3. **Na data de corte**, repita com o backup final. O script atualiza o que mudou e não mexe no
+   que já foi editado no sistema novo.
+
+### 3. Primeiro administrador
+```bash
+SUPABASE_URL=... SUPABASE_SERVICE_ROLE_KEY=... DATABASE_URL=... \
+  node scripts/create-admin.mjs "Dr. Everson Rezeck" email@exemplo.com "senha-forte" "Dr. Everson Rezeck"
+```
+Os demais logins (secretárias, profissionais) são criados em **Ajustes → Usuários**.
+
+### 4. Vercel
+1. Importe o repositório (o `vercel.json` já define build, região São Paulo e o cron diário às 9h).
+2. Cadastre as variáveis de `.env.example` em *Settings → Environment Variables*.
+   Use o **Transaction pooler** (porta 6543) no `DATABASE_URL`.
+
+### 5. Integrações (no sistema, em Ajustes → Lembretes e integrações)
+- **Webhook dos lembretes** e **webhook de aniversário**: URLs (n8n, Chatflux…) que recebem um
+  `POST` por envio, uma vez por dia. Formato do JSON abaixo.
+- **Evolution API**: configure o webhook da instância (evento `MESSAGES_UPSERT`) para
+  `https://SEU-DOMINIO/api/webhooks/evolution?secret=EVOLUTION_WEBHOOK_SECRET`.
+  A Evolution API em si precisa estar hospedada (ex.: Railway); ela não roda na Vercel.
+
+## Lembretes de retorno
+- Contam a partir do último atendimento em que o paciente **chegou** com aquele procedimento,
+  usando o prazo do procedimento (Ajustes → Procedimentos; padrão 6 meses).
+- Repetir o procedimento reinicia só aquele lembrete; os dos outros procedimentos continuam.
+- Se o "chegou" for desmarcado ou o procedimento removido, o lembrete se corrige sozinho.
+- Paciente com agendamento futuro tem o envio adiado; quem pediu para não receber mensagens ou não
+  tem telefone não recebe. Lembretes com mais de 30 dias de atraso (ex.: histórico antigo) não são
+  enviados — ficam como "vencidos" para campanhas de recuperação.
+- A fila pode ser ajustada na tela **Lembretes** (mudar data, não enviar, criar manualmente).
+
+Exemplo de envio:
+```json
+{
+  "tipo": "lembrete_retorno",
+  "lembrete_id": "…",
+  "paciente": { "id": "…", "nome": "Maria Souza", "primeiro_nome": "Maria", "telefone": "(31) 99999-0000", "whatsapp": "5531999990000" },
+  "procedimento": { "id": "…", "nome": "Botox" },
+  "ultimo_atendimento": "2026-07-02",
+  "vencimento": "2026-11-02",
+  "tentativa": 1
+}
+```
+Aniversário: `{ "tipo": "aniversario", "paciente": {…}, "data_nascimento": "1985-11-02", "idade": 41 }`.
+Com `WEBHOOK_SIGNING_SECRET` definido, cada envio traz `x-clinica-assinatura: sha256=<HMAC do corpo>`.
+Respostas fora de 2xx são reenviadas mais tarde (até 5 tentativas).
+
+## Desenvolvimento local
+Precisa de Node 20+ e Postgres 16 local (usuário `postgres`/`postgres`).
+```bash
+npm install
+npm run db:reset                      # cria o banco "prontuario" com migrações e seed
+psql -U postgres -d prontuario -f dev/seed-users.sql   # logins de teste (senha: senha123)
+POSTGREST_BIN=/caminho/postgrest node dev/stack.mjs    # imita o Supabase + /api
+npm run dev                           # app em http://localhost:5173 (copie as VITE_* que o stack imprime para .env.local)
+npm test                              # testes (usam o banco prontuario_test)
+```
