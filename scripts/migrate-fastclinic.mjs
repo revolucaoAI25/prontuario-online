@@ -100,6 +100,13 @@ function validBirthDate(value) {
 
 const isoDay = (d) => (d ? d.toISOString().slice(0, 10) : null);
 
+// Upserts report whether each row was new (xmax = 0) or changed; rows that
+// are identical, or were edited in the new system, are skipped entirely.
+const RETURNING_KIND = `returning (xmax = 0) as inserted`;
+function tally(counts, rows) {
+  for (const r of rows) counts[r.inserted ? 'novos' : 'alterados']++;
+}
+
 async function inBatches(rows, fn) {
   for (let i = 0; i < rows.length; i += BATCH) {
     await fn(rows.slice(i, i + BATCH));
@@ -148,9 +155,16 @@ async function importOpeningHours(ms, pgc, agendaIds) {
   const toMin = (t) => Number(t.slice(0, 2)) * 60 + Number(t.slice(3, 5));
   const toTime = (m) => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
 
+  const skipped = [];
   await tx(pgc, async () => {
     for (const seq of ['2', '3', '5', '6']) {
       const agendaId = agendaIds[seq];
+      // A re-import must not undo hours adjusted in the new system.
+      const configured = (await pgc.query(`select count(*)::int as n from agenda_slot_times where agenda_id = $1`, [agendaId])).rows[0].n;
+      if (configured > 0) {
+        skipped.push(AGENDAS[seq].name);
+        continue;
+      }
       const duration = (await pgc.query(
         `select coalesce((select duration_minutes from appointment_types where agenda_id = $1 and is_default), 30) as d`,
         [agendaId],
@@ -180,10 +194,11 @@ async function importOpeningHours(ms, pgc, agendaIds) {
       }
     }
   });
-  return recordset.length;
+  return { horarios: recordset.length, mantidas: skipped };
 }
 
 async function importPatients(ms, pgc) {
+  const counts = { novos: 0, alterados: 0 };
   const { recordset } = await ms.query(`
     select pe.Seq, pe.Codigo, pe.Nome, pe.Cnpj_cpf, pe.Email, pe.Fone, pe.Celular, pe.tel_contato, pe.profissao,
            pe.nascimento, pe.Endereco, pe.numero, pe.complemento, pe.Bairro, pe.Municipio, pe.Uf, pe.Cep,
@@ -226,15 +241,22 @@ async function importPatients(ms, pgc) {
        phone_alt = excluded.phone_alt, profession = excluded.profession, birth_date = excluded.birth_date,
        address = excluded.address, notes = excluded.notes, allow_messages = excluded.allow_messages,
        legacy_raw = excluded.legacy_raw, legacy_synced_at = now()
-     where patients.updated_at <= patients.legacy_synced_at + interval '5 seconds'`,
+     where patients.updated_at <= patients.legacy_synced_at + interval '5 seconds'
+       and (patients.full_name, patients.cpf, patients.email, patients.phone, patients.phone_alt, patients.profession,
+            patients.birth_date, patients.address, patients.notes, patients.allow_messages)
+           is distinct from
+           (excluded.full_name, excluded.cpf, excluded.email, excluded.phone, excluded.phone_alt, excluded.profession,
+            excluded.birth_date, excluded.address, excluded.notes, excluded.allow_messages)
+     ${RETURNING_KIND}`,
     [JSON.stringify(batch)],
-  ));
-  return rows.length;
+  ).then((r) => tally(counts, r.rows)));
+  return { total: rows.length, ...counts };
 }
 
 // Each legacy evolution becomes one entry per dated line. Entry ids are
 // evolution id * 1000 + position, so a newer backup updates them in place.
 async function importRecords(ms, pgc) {
+  const counts = { novos: 0, alterados: 0 };
   const { recordset } = await ms.query(`
     select e.SEQ, p.SEQCLIENTE as patient, e.datta, cast(e.HISTORIA as varchar(max)) as historia,
            cast(e.AUXHISTORIA as varchar(max)) as aux, e.historico2
@@ -271,9 +293,12 @@ async function importRecords(ms, pgc) {
      join patients p on p.legacy_id = x.patient_legacy_id
      on conflict (legacy_id) do update set
        patient_id = excluded.patient_id, entry_at = excluded.entry_at, content = excluded.content, legacy_synced_at = now()
-     where record_entries.updated_at <= record_entries.legacy_synced_at + interval '5 seconds'`,
+     where record_entries.updated_at <= record_entries.legacy_synced_at + interval '5 seconds'
+       and (record_entries.patient_id, record_entries.entry_at, record_entries.content)
+           is distinct from (excluded.patient_id, excluded.entry_at, excluded.content)
+     ${RETURNING_KIND}`,
     [JSON.stringify(batch)],
-  ));
+  ).then((r) => tally(counts, r.rows)));
   // Lines that disappeared from a newer backup (an entry index past the end).
   const latest = new Map();
   for (const r of rows) latest.set(Math.floor(r.legacy_id / 1000), Math.max(latest.get(Math.floor(r.legacy_id / 1000)) ?? -1, r.legacy_id % 1000));
@@ -284,7 +309,7 @@ async function importRecords(ms, pgc) {
        and r.updated_at <= r.legacy_synced_at + interval '5 seconds'`,
     [JSON.stringify(Object.fromEntries(latest))],
   );
-  return { evolutions: recordset.length, entries: rows.length, chars };
+  return { evolutions: recordset.length, entries: rows.length, chars, ...counts };
 }
 
 function legacyStatus(a, now) {
@@ -348,7 +373,7 @@ async function importAppointments(ms, pgc, agendaIds) {
     await pgc.query(`select ensure_procedure($1)`, [name]);
   }
 
-  let written = 0;
+  const counts = { novos: 0, alterados: 0 };
   await inBatches(appointments, (batch) => tx(pgc, async () => {
     const { rows } = await pgc.query(
       `with src as (
@@ -377,10 +402,15 @@ async function importAppointments(ms, pgc, agendaIds) {
          patient_id = excluded.patient_id, starts_at = excluded.starts_at, ends_at = excluded.ends_at,
          status = excluded.status, notes = excluded.notes, legacy_synced_at = now()
        where appointments.updated_at <= appointments.legacy_synced_at + interval '5 seconds'
-       returning id, legacy_id`,
+         and (appointments.agenda_id, appointments.appointment_type_id, appointments.patient_id, appointments.starts_at,
+              appointments.ends_at, appointments.status, appointments.notes)
+             is distinct from
+             (excluded.agenda_id, excluded.appointment_type_id, excluded.patient_id, excluded.starts_at,
+              excluded.ends_at, excluded.status, excluded.notes)
+       returning id, legacy_id, (xmax = 0) as inserted`,
       [JSON.stringify(batch)],
     );
-    written += rows.length;
+    tally(counts, rows);
     const procedureByLegacy = new Map(batch.map((b) => [b.legacy_id, b.procedure]));
     const links = rows.map((r) => ({ appointment_id: r.id, procedure: procedureByLegacy.get(r.legacy_id) }));
     await pgc.query(
@@ -397,6 +427,20 @@ async function importAppointments(ms, pgc, agendaIds) {
     );
   }));
 
+  // Future bookings and blocks deleted in FastClinic since the last import.
+  const exportIds = appointments.map((a) => a.legacy_id);
+  const removed = await pgc.query(
+    `update appointments
+     set status = 'cancelado', cancel_reason = 'Excluído no FastClinic', legacy_synced_at = now()
+     where source = 'legado' and legacy_id <> all($1::int[]) and status <> 'cancelado' and starts_at > now()
+       and updated_at <= legacy_synced_at + interval '5 seconds'`,
+    [exportIds],
+  );
+  await pgc.query(
+    `delete from agenda_blocks where legacy_id is not null and legacy_id <> all($1::int[]) and starts_at > now()`,
+    [blocks.map((b) => b.legacy_id)],
+  );
+
   await pgc.query(
     `insert into agenda_blocks (legacy_id, agenda_id, starts_at, ends_at, reason)
      select x.legacy_id, x.agenda_id, local_timestamp(x.day, x.time::time),
@@ -408,7 +452,7 @@ async function importAppointments(ms, pgc, agendaIds) {
     [JSON.stringify(blocks)],
   );
 
-  return { source: recordset.length, appointments: appointments.length, written, blocks: blocks.length, unknownAgenda };
+  return { source: recordset.length, appointments: appointments.length, ...counts, cancelados: removed.rowCount, blocks: blocks.length, unknownAgenda };
 }
 
 async function main() {
@@ -427,12 +471,15 @@ async function main() {
   const started = Date.now();
   try {
     const agendaIds = await ensureAgendas(pgc);
-    console.log(`horários de agenda: ${await importOpeningHours(ms, pgc, agendaIds)} horários fixos importados`);
-    console.log(`pacientes: ${await importPatients(ms, pgc)}`);
+    const hours = await importOpeningHours(ms, pgc, agendaIds);
+    console.log(`horários das agendas: ${hours.mantidas.length ? `mantidos os já configurados (${hours.mantidas.join(', ')})` : `${hours.horarios} horários fixos importados`}`);
+    const pat = await importPatients(ms, pgc);
+    console.log(`pacientes: ${pat.total} no FastClinic → ${pat.novos} novos, ${pat.alterados} alterados`);
     const rec = await importRecords(ms, pgc);
-    console.log(`prontuários: ${rec.evolutions} históricos → ${rec.entries} entradas (${rec.chars} caracteres)`);
+    console.log(`prontuários: ${rec.entries} entradas → ${rec.novos} novas, ${rec.alterados} alteradas`);
     const appt = await importAppointments(ms, pgc, agendaIds);
-    console.log(`agendamentos: ${appt.written} gravados de ${appt.appointments} (${appt.source} no FastClinic); ${appt.blocks} bloqueios futuros; ${appt.unknownAgenda} sem agenda`);
+    console.log(`agendamentos: ${appt.appointments} no FastClinic → ${appt.novos} novos, ${appt.alterados} alterados, ${appt.cancelados} cancelados (excluídos lá); ${appt.blocks} bloqueios futuros`);
+    console.log('Registros editados no sistema novo depois da última importação não são alterados.');
     console.log(`concluído em ${Math.round((Date.now() - started) / 1000)}s`);
   } finally {
     await pgc.end();

@@ -56,6 +56,25 @@ test('attended visit with a procedure creates a reminder due after its period', 
   assert.equal(dateText(rows[0].due_on), await expectedDue(10, 4));
 });
 
+test('imported FastClinic history never creates reminders; a status set here does', async () => {
+  const p = await createPatient(db, { name: 'Leda Legado' });
+  const legacyVisit = async (daysAgo, status) => (await one(
+    db,
+    `insert into appointments (agenda_id, patient_id, starts_at, ends_at, status, source, legacy_synced_at)
+     values ($1, $2, local_timestamp(clinic_today() - $3::int, '10:00'), local_timestamp(clinic_today() - $3::int, '11:00'), $4, 'legado', now())
+     returning id`,
+    [estetica, p, daysAgo, status],
+  )).id;
+  const imported = await legacyVisit(30, 'chegou');
+  await db.query(`select add_appointment_procedures($1, array['Botox'])`, [imported]);
+  assert.equal((await pending(p)).length, 0, 'imported visit is ignored');
+
+  const bookedBeforeGoLive = await legacyVisit(1, 'confirmado');
+  await db.query(`select add_appointment_procedures($1, array['Ultraformer'])`, [bookedBeforeGoLive]);
+  await db.query(`update appointments set status = 'chegou' where id = $1`, [bookedBeforeGoLive]);
+  assert.deepEqual((await pending(p)).map((r) => r.procedure_name), ['Ultraformer'], 'marked here after the import');
+});
+
 test('no reminder while the visit has not happened yet', async () => {
   const p = await createPatient(db, { name: 'Bia Agendada' });
   await visit(p, 3, ['Botox'], 'confirmado');

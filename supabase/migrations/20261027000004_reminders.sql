@@ -1,7 +1,10 @@
 -- Return reminders per procedure, and birthday messages.
 --
 -- A patient's pending reminder for a procedure is *derived* from their latest
--- attended ('chegou') appointment that included that procedure:
+-- attended ('chegou') appointment that included that procedure, counting only
+-- visits registered in this system: history imported from FastClinic never
+-- produces reminders, unless staff marks its status here after the import
+-- (e.g. a visit booked in FastClinic that happens after go-live):
 --   due_on = visit date + procedure.reminder_months (or the default).
 -- Doing the same procedure again moves the countdown; other procedures'
 -- reminders are untouched. Any change that could affect this (status,
@@ -62,6 +65,7 @@ begin
     where a.patient_id = p_patient_id
       and ap.procedure_id = p_procedure_id
       and a.status = 'chegou'
+      and (a.source <> 'legado' or a.status_changed_at > a.legacy_synced_at)
     order by a.starts_at desc
     limit 1;
 
@@ -121,6 +125,7 @@ begin
         select ap.procedure_id
         from appointments a join appointment_procedures ap on ap.appointment_id = a.id
         where a.patient_id = p_patient_id and a.status = 'chegou'
+          and (a.source <> 'legado' or a.status_changed_at > a.legacy_synced_at)
     loop
         perform recompute_reminder(p_patient_id, v_procedure_id);
     end loop;

@@ -1,9 +1,39 @@
 import { test, before, after } from 'node:test';
+import http from 'node:http';
 import assert from 'node:assert/strict';
 import { resetDatabase, connect, TEST_DATABASE_URL } from '../helpers/db.js';
 import { createEmulator, SERVICE_ROLE_KEY } from '../../dev/supabase-emulator.mjs';
 
 process.env.DATABASE_URL = TEST_DATABASE_URL;
+process.env.EVOLUTION_API_KEY = 'chave-global';
+process.env.EVOLUTION_INSTANCE = 'clinica-teste';
+process.env.EVOLUTION_WEBHOOK_SECRET = 'segredo-webhook';
+
+// Minimal stand-in for an Evolution API v2 server.
+const evo = { instances: new Map(), calls: [] };
+const evoServer = http.createServer((req, res) => {
+  const chunks = [];
+  req.on('data', (c) => chunks.push(c));
+  req.on('end', () => {
+    const body = chunks.length ? JSON.parse(Buffer.concat(chunks).toString()) : null;
+    evo.calls.push({ method: req.method, url: req.url, body });
+    const send = (status, json) => { res.statusCode = status; res.setHeader('content-type', 'application/json'); res.end(JSON.stringify(json)); };
+    if (req.headers.apikey !== 'chave-global') return send(401, { message: 'Unauthorized' });
+    const [, area, action, name] = req.url.split('/');
+    const instance = evo.instances.get(decodeURIComponent(name ?? ''));
+    if (area === 'instance' && action === 'create') {
+      evo.instances.set(body.instanceName, { state: 'connecting', webhook: body.webhook });
+      return send(201, { instance: { instanceName: body.instanceName }, qrcode: { base64: 'data:image/png;base64,QR1', pairingCode: 'ABCD1234' } });
+    }
+    if (!instance) return send(404, { response: { message: ['instance does not exist'] } });
+    if (action === 'connectionState') return send(200, { instance: { state: instance.state } });
+    if (action === 'connect') return send(200, { base64: 'data:image/png;base64,QR2', pairingCode: 'EFGH5678' });
+    if (area === 'webhook' && action === 'set') { instance.webhook = body.webhook; return send(201, body); }
+    if (action === 'logout') { instance.state = 'close'; return send(200, {}); }
+    return send(404, {});
+  });
+}).listen(0);
+process.env.EVOLUTION_API_URL = `http://localhost:${evoServer.address().port}/`;
 
 let db;
 let emulator;
@@ -33,6 +63,7 @@ before(async () => {
 });
 
 after(async () => {
+  evoServer.close();
   api.close();
   emulator.close();
   await closePool();
@@ -87,4 +118,37 @@ test('admin cannot remove their own admin access; can deactivate others', async 
   const other = await call('atualizar_usuario', { id: '00000000-0000-0000-0000-0000000000a2', ativo: false }, admin);
   assert.equal(other.body.usuario.active, false);
   assert.equal((await call('usuarios', {}, await login('rec@t.dev'))).status, 403, 'deactivated staff lose access');
+});
+
+test('WhatsApp panel: creates the instance with our webhook, shows the QR, tracks status', async () => {
+  const admin = await login('admin@t.dev');
+  let status = await call('whatsapp_status', {}, admin);
+  assert.deepEqual(status.body, { ok: true, configurado: true, instancia: 'clinica-teste', existe: false, estado: 'inexistente' });
+
+  const connect = await call('whatsapp_conectar', {}, admin);
+  assert.equal(connect.body.qrcode, 'data:image/png;base64,QR1');
+  assert.equal(connect.body.codigo_pareamento, 'ABCD1234');
+  const created = evo.instances.get('clinica-teste');
+  assert.match(created.webhook.url, /\/api\/webhooks\/evolution\?secret=segredo-webhook$/);
+  assert.deepEqual(created.webhook.events, ['MESSAGES_UPSERT', 'SEND_MESSAGE']);
+
+  const again = await call('whatsapp_conectar', {}, admin);
+  assert.equal(again.body.qrcode, 'data:image/png;base64,QR2', 'existing instance: fresh QR, webhook re-applied');
+  assert.ok(evo.calls.some((c) => c.url === '/webhook/set/clinica-teste'));
+
+  created.state = 'open';
+  status = await call('whatsapp_status', {}, admin);
+  assert.equal(status.body.estado, 'open');
+  assert.equal((await call('whatsapp_conectar', {}, admin)).body.estado, 'open');
+
+  await call('whatsapp_desconectar', {}, admin);
+  assert.equal(created.state, 'close');
+});
+
+test('WhatsApp panel: admin only, and a wrong Evolution key is explained', async () => {
+  assert.equal((await call('whatsapp_status', {}, await login('amanda@t.dev', 'novasenha99'))).status, 403);
+  process.env.EVOLUTION_API_KEY = 'errada';
+  const res = await call('whatsapp_status', {}, await login('admin@t.dev'));
+  assert.equal(res.body.erro.codigo, 'evolution_chave_invalida');
+  process.env.EVOLUTION_API_KEY = 'chave-global';
 });

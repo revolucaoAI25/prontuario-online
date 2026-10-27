@@ -289,7 +289,6 @@ a { color: var(--brand); }
 .entry::before { content: ''; position: absolute; left: -5px; top: 15px; width: 8px; height: 8px; border-radius: 99px; background: var(--brand); }
 .entry-top { display: flex; align-items: baseline; gap: 10px; }
 .entry-date { font: 600 12.5px 'IBM Plex Mono', monospace; }
-.entry-author { font-size: 11.5px; color: var(--brand-strong); font-weight: 700; }
 .entry-text { white-space: pre-wrap; font-size: 13.5px; color: var(--ink); margin-top: 3px; overflow-wrap: anywhere; }
 .entry-actions { margin-left: auto; display: flex; gap: 4px; opacity: 0; }
 .entry:hover .entry-actions { opacity: 1; }

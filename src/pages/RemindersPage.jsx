@@ -67,6 +67,7 @@ export function RemindersPage() {
     return must(q);
   }, [tab]);
   const { data: birthdays = [] } = useLoad(() => must(supabase.rpc('birthdays_on')), []);
+  const { data: procedures = [] } = useLoad(() => loadProcedures(), []);
 
   async function update(id, changes) {
     const { error } = await supabase.from('reminders').update(changes).eq('id', id);
@@ -114,7 +115,13 @@ export function RemindersPage() {
                     {!r.patient?.phone && <span className="tag warn" style={{ marginLeft: 6 }}>sem telefone</span>}
                     {r.patient && !r.patient.allow_messages && <span className="tag" style={{ marginLeft: 6 }}>não recebe mensagens</span>}
                   </td>
-                  <td>{r.procedure?.name}</td>
+                  <td>
+                    {status === 'pendente' ? (
+                      <select className="select" style={{ width: 230 }} value={r.procedure_id} onChange={(e) => update(r.id, { procedure_id: e.target.value, manual_due: true })} aria-label="Procedimento">
+                        {procedures.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                      </select>
+                    ) : r.procedure?.name}
+                  </td>
                   <td className="mono">{r.last_done_at ? formatDay(localDay(r.last_done_at)) : '—'}</td>
                   <td>
                     {status === 'pendente' ? (

@@ -8,6 +8,7 @@ import { useToast } from '../context/ToastContext.jsx';
 import { Avatar, Empty, Modal, StatusPill } from '../components/ui.jsx';
 import { PatientForm } from '../components/PatientForm.jsx';
 import { PaymentsPanel } from '../components/PaymentsPanel.jsx';
+import { PatientReminders } from '../components/PatientReminders.jsx';
 import { AppointmentModal } from './agenda/AppointmentModal.jsx';
 import { APPOINTMENT_SELECT, loadAgendas, proceduresOf } from './agenda/agendaData.js';
 import { ageFrom, formatDay, localDay, localTime, zonedToUtc } from '../lib/time.js';
@@ -144,8 +145,6 @@ function Entry({ entry, canEdit, onChanged }) {
     <div className="entry" data-testid="record-entry">
       <div className="entry-top">
         <span className="entry-date">{formatDay(localDay(entry.entry_at))}</span>
-        {entry.author?.full_name && <span className="entry-author">{entry.author.full_name}</span>}
-        {entry.legacy_id && <span className="tag">FastClinic</span>}
         {canEdit && !editing && (
           <span className="entry-actions">
             <button type="button" className="icon-btn" onClick={() => setEditing(true)} aria-label="Editar"><Pencil /></button>
@@ -186,15 +185,12 @@ export function RecordPage() {
 
   const patientLoad = useLoad(() => must(supabase.from('patients').select('*').eq('id', patientId).single()), [patientId]);
   const entriesLoad = useLoad(
-    () => must(supabase.from('record_entries').select('*, author:staff(full_name), record_attachments(*)').eq('patient_id', patientId).order('entry_at', { ascending: false })),
+    () => must(supabase.from('record_entries').select('*, record_attachments(*)').eq('patient_id', patientId).order('entry_at', { ascending: false })),
     [patientId],
   );
   const sideLoad = useLoad(async () => {
-    const [appointments, reminders] = await Promise.all([
-      must(supabase.from('appointments').select(`${APPOINTMENT_SELECT}, agenda:agendas(name, color)`).eq('patient_id', patientId).order('starts_at', { ascending: false }).limit(40)),
-      must(supabase.from('reminders').select('*, procedure:procedures(name)').eq('patient_id', patientId).eq('status', 'pendente').order('due_on')),
-    ]);
-    return { appointments, reminders };
+    const appointments = await must(supabase.from('appointments').select(`${APPOINTMENT_SELECT}, agenda:agendas(name, color)`).eq('patient_id', patientId).order('starts_at', { ascending: false }).limit(40));
+    return { appointments };
   }, [patientId]);
   const { data: shortcuts = [] } = useLoad(() => must(supabase.from('note_shortcuts').select('*').eq('active', true).order('sort_order')), []);
   const { data: agendas = [] } = useLoad(loadAgendas, []);
@@ -258,16 +254,7 @@ export function RecordPage() {
               </div>
             ))}
           </div>
-          <div className="card card-pad">
-            <div className="section-title">Lembretes de retorno</div>
-            {(sideLoad.data?.reminders ?? []).length === 0 && <div className="small muted">Nenhum pendente.</div>}
-            {(sideLoad.data?.reminders ?? []).map((r) => (
-              <div key={r.id} className="side-item row">
-                <span className="grow">{r.procedure?.name}</span>
-                <span className="small muted">{formatDay(r.due_on)}</span>
-              </div>
-            ))}
-          </div>
+          <PatientReminders patientId={patientId} />
           <div className="card card-pad">
             <div className="section-title">Histórico de atendimentos</div>
             {past.length === 0 && <div className="small muted">Nenhum.</div>}

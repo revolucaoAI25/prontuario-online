@@ -1,0 +1,121 @@
+# Passo a passo de implantação
+
+Ordem: **Supabase → dados → primeiro login → Vercel → WhatsApp → webhooks → virada**.
+Guarde cada chave num gerenciador de senhas à medida que for criando.
+
+---
+
+## 1. Supabase (banco, login e arquivos)
+
+1. Em [supabase.com](https://supabase.com) → **New project**.
+   - Nome: `clinica-rezeck`. Região: **South America (São Paulo)**.
+   - Crie uma senha forte para o banco e guarde (é a `SENHA` das conexões abaixo).
+   - Plano: pode começar no Free para montar e testar; **mude para Pro antes da virada**
+     (backup diário automático).
+2. **Criar as tabelas.** Menu **SQL Editor** → **New query**. Cole e rode, **um por vez e nesta
+   ordem**, o conteúdo de cada arquivo da pasta `supabase/migrations` do repositório:
+   `…001_base.sql`, `…002_patients_records.sql`, `…003_scheduling.sql`, `…004_reminders.sql`,
+   `…005_finance_stock.sql`, `…006_messaging.sql`, `…007_security.sql`.
+   Depois rode `supabase/seed.sql` (agendas, tipos, procedimentos e atalhos iniciais).
+   Cada um deve terminar com "Success. No rows returned".
+3. **Bloquear cadastro aberto.** **Authentication → Sign In / Providers → Email**: desligue
+   **Allow new users to sign up** e salve. (Os logins são criados pelo administrador no sistema.)
+4. **Anotar as chaves** (**Project Settings → API Keys** e botão **Connect** no topo):
+   - `Project URL` → vai em `VITE_SUPABASE_URL` e `SUPABASE_URL`
+   - `anon public` → `VITE_SUPABASE_ANON_KEY`
+   - `service_role` (secreta) → `SUPABASE_SERVICE_ROLE_KEY`
+   - **Connect → Transaction pooler** (porta **6543**) → `DATABASE_URL` da Vercel
+   - **Connect → Direct connection** (porta **5432**) → usada só na importação dos dados
+
+## 2. Importar os dados do FastClinic
+
+Pode ser feito por mim: me envie o backup (como da primeira vez, pelo Drive) e a conexão
+**Direct connection** do passo 1.4. O que acontece:
+
+1. O `.bak` é restaurado num SQL Server temporário.
+2. Roda `npm run migrate:fastclinic` apontando para o Supabase. Leva ~1 minuto e mostra quantos
+   pacientes, prontuários e agendamentos entraram.
+
+O histórico importado aparece na agenda e no prontuário, mas **não gera lembretes nem nenhuma
+ação automática** — lembretes só nascem do que for registrado no sistema novo.
+
+## 3. Primeiro login (administrador)
+
+Rodado uma vez (eu faço junto com a importação):
+```bash
+node scripts/create-admin.mjs "Dr. Everson Rezeck" email-do-everson "senha-inicial" "Dr. Everson Rezeck"
+```
+Crie também um login de administrador para você (agência), para acessar de fora da clínica:
+mesmo comando com seu nome e e-mail, sem o último argumento.
+Os demais logins (secretárias, Simone, estética) são criados **dentro do sistema** em
+**Ajustes → Usuários**.
+
+## 4. Vercel (o sistema no ar)
+
+1. Em [vercel.com](https://vercel.com) → **Add New → Project** → importe o repositório
+   `revolucaoAI25/prontuario-online` (branch principal depois do merge).
+   O `vercel.json` já configura tudo (Vite, região São Paulo, cron diário às 9h).
+2. Antes de clicar em Deploy, abra **Environment Variables** e cadastre:
+
+   | Variável | Valor |
+   |---|---|
+   | `VITE_SUPABASE_URL` | Project URL do Supabase |
+   | `VITE_SUPABASE_ANON_KEY` | chave `anon public` |
+   | `SUPABASE_URL` | Project URL (de novo) |
+   | `SUPABASE_SERVICE_ROLE_KEY` | chave `service_role` |
+   | `DATABASE_URL` | Transaction pooler (porta 6543), com a senha do banco |
+   | `CLINIC_API_KEY` | invente uma chave longa (ex.: gere em um gerador de senhas, 40+ caracteres) |
+   | `CRON_SECRET` | outra chave longa |
+   | `EVOLUTION_WEBHOOK_SECRET` | outra chave longa |
+   | `EVOLUTION_API_URL` | endereço do seu servidor Evolution (ex.: `https://evolution.suaagencia.com`) |
+   | `EVOLUTION_API_KEY` | a chave global (`AUTHENTICATION_API_KEY`) do servidor Evolution |
+   | `EVOLUTION_INSTANCE` | `clinica-rezeck` (nome da instância nova; não use a de outro projeto) |
+   | `WEBHOOK_SIGNING_SECRET` | opcional: assina os envios de lembrete/aniversário |
+
+3. **Deploy**. Ao terminar, abra o endereço gerado e entre com o login do passo 3.
+4. (Opcional) **Settings → Domains**: um domínio próprio, ex. `sistema.clinicarezeck.com.br`.
+5. Plano: o Hobby (grátis) aguenta tecnicamente, mas os termos da Vercel proíbem uso comercial
+   nele; para cliente pagante o correto é o Pro.
+
+## 5. WhatsApp da clínica (Evolution API)
+
+Use o **mesmo servidor Evolution** que você já tem, com uma **instância nova** (cada instância é
+um número, com webhook próprio — não interfere no outro projeto).
+
+1. No sistema: **Ajustes → Lembretes e integrações → WhatsApp da clínica → Conectar (mostrar QR
+   Code)**. O sistema cria a instância `clinica-rezeck` e já aponta o webhook para ele.
+2. No celular da clínica: WhatsApp → **Aparelhos conectados → Conectar um aparelho** → leia o QR.
+   O status muda para **Conectado**.
+3. Mande uma mensagem de teste para o número da clínica: ela aparece em **WhatsApp** no menu.
+
+Observação: se o número da clínica estiver na API oficial (Cloud API), ele não aceita conexão por
+QR Code; nesse caso o espelho precisa ser feito pelo provedor oficial.
+
+## 6. Lembretes, aniversários e API de agendamento
+
+1. **Ajustes → Lembretes e integrações**: preencha
+   - **Webhook dos lembretes**: URL do fluxo (n8n/Chatflux) que manda a mensagem de retorno;
+   - **Webhook de aniversário**: URL do fluxo de parabéns;
+   e salve. O formato do que chega está no `README.md`. Todo dia às 9h o sistema envia os que
+   venceram.
+2. **Ajustes → Procedimentos e retornos**: confira os prazos (Botox 4 meses, etc.).
+3. **API de agendamento** para a IA: endereço `https://SEU-DOMINIO/api/agenda/...`, cabeçalho
+   `x-api-key: <CLINIC_API_KEY>`. Os exemplos de chamada estão em `docs/API.md`.
+
+## 7. Dia da virada
+
+1. Na véspera ou de manhã cedo, exporte o backup final do FastClinic e me envie.
+2. Rodo a importação de novo: entram só os pacientes, registros e agendamentos novos ou alterados;
+   o que já foi editado no sistema novo é preservado; agendamentos futuros excluídos no FastClinic
+   são cancelados.
+3. A partir daí, tudo é lançado só no sistema novo.
+
+## 8. Conferência depois de subir
+
+- [ ] Login do Dr. Everson entra e vê **Financeiro** e **Ajustes**; o de uma secretária não vê.
+- [ ] Agenda do dia mostra os horários e atendimentos corretos.
+- [ ] Prontuário de um paciente antigo mostra o histórico.
+- [ ] Marcar um atendimento como **Chegou** com um procedimento cria o lembrete (aba Lembretes).
+- [ ] Mensagem em **Equipe** toca o aviso no computador de outra pessoa.
+- [ ] WhatsApp conectado e mensagens aparecendo.
+- [ ] Uma chamada de teste da IA em `/api/agenda/disponibilidade` responde.

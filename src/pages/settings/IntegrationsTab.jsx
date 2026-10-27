@@ -3,6 +3,7 @@ import { supabase, must } from '../../lib/supabase.js';
 import { useLoad } from '../../lib/hooks.js';
 import { useToast } from '../../context/ToastContext.jsx';
 import { Field } from '../../components/ui.jsx';
+import { WhatsAppConnection } from './WhatsAppConnection.jsx';
 
 const KEYS = ['default_reminder_months', 'reminder_max_overdue_days', 'reminder_webhook_url', 'birthday_webhook_url'];
 
@@ -65,11 +66,7 @@ export function IntegrationsTab() {
         <div className="section-title">API de agendamento</div>
         <div className="small">Endereço: <code>{origin}/api/agenda/…</code> — autenticação pelo cabeçalho <code>x-api-key</code> (variável <code>CLINIC_API_KEY</code> na Vercel). Documentação em <code>docs/API.md</code>.</div>
       </div>
-      <div className="card card-pad">
-        <div className="section-title">WhatsApp (Evolution API)</div>
-        <div className="small">Configure o webhook da instância (evento <code>MESSAGES_UPSERT</code>) para:</div>
-        <code className="small">{origin}/api/webhooks/evolution?secret=EVOLUTION_WEBHOOK_SECRET</code>
-      </div>
+      <WhatsAppConnection />
     </div>
   );
 }

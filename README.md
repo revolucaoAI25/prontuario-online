@@ -24,6 +24,9 @@ aniversários e uma API de agendamento para integrações (IA/WhatsApp).
 
 ## Implantação
 
+O passo a passo detalhado (com onde achar cada chave) está em
+[`docs/IMPLANTACAO.md`](docs/IMPLANTACAO.md). Resumo:
+
 ### 1. Supabase
 1. Crie o projeto na região **São Paulo (sa-east-1)**.
 2. Aplique as migrações em ordem (Supabase CLI: `supabase link` e `supabase db push`, ou cole
@@ -41,8 +44,9 @@ aniversários e uma API de agendamento para integrações (IA/WhatsApp).
    ```
    Importa horários de atendimento (inclusive os horários "quebrados"), pacientes, prontuários,
    histórico de agendamentos com procedimentos, e bloqueios futuros. Leva menos de 1 minuto.
-3. **Na data de corte**, repita com o backup final. O script atualiza o que mudou e não mexe no
-   que já foi editado no sistema novo.
+3. **Na data de corte**, repita com o backup final. O script mostra o que é novo e o que mudou,
+   atualiza só isso, não mexe no que já foi editado no sistema novo, mantém os horários das agendas
+   já configurados e cancela agendamentos futuros excluídos no FastClinic.
 
 ### 3. Primeiro administrador
 ```bash
@@ -59,19 +63,22 @@ Os demais logins (secretárias, profissionais) são criados em **Ajustes → Usu
 ### 5. Integrações (no sistema, em Ajustes → Lembretes e integrações)
 - **Webhook dos lembretes** e **webhook de aniversário**: URLs (n8n, Chatflux…) que recebem um
   `POST` por envio, uma vez por dia. Formato do JSON abaixo.
-- **Evolution API**: configure o webhook da instância (evento `MESSAGES_UPSERT`) para
-  `https://SEU-DOMINIO/api/webhooks/evolution?secret=EVOLUTION_WEBHOOK_SECRET`.
-  A Evolution API em si precisa estar hospedada (ex.: Railway); ela não roda na Vercel.
+- **WhatsApp (Evolution API)**: com `EVOLUTION_API_URL`/`EVOLUTION_API_KEY` definidos, o botão
+  **Conectar** cria a instância da clínica, configura o webhook e mostra o QR Code. Pode ser o mesmo
+  servidor Evolution de outro projeto (instância separada).
 
 ## Lembretes de retorno
+- Só contam atendimentos registrados no sistema novo: o histórico importado do FastClinic não gera
+  lembretes (a não ser que a equipe marque o status aqui depois da importação).
 - Contam a partir do último atendimento em que o paciente **chegou** com aquele procedimento,
   usando o prazo do procedimento (Ajustes → Procedimentos; padrão 6 meses).
 - Repetir o procedimento reinicia só aquele lembrete; os dos outros procedimentos continuam.
 - Se o "chegou" for desmarcado ou o procedimento removido, o lembrete se corrige sozinho.
 - Paciente com agendamento futuro tem o envio adiado; quem pediu para não receber mensagens ou não
-  tem telefone não recebe. Lembretes com mais de 30 dias de atraso (ex.: histórico antigo) não são
-  enviados — ficam como "vencidos" para campanhas de recuperação.
-- A fila pode ser ajustada na tela **Lembretes** (mudar data, não enviar, criar manualmente).
+  tem telefone não recebe. Lembretes com mais de 30 dias de atraso não são enviados (ficam como
+  "vencidos").
+- A fila pode ser ajustada na tela **Lembretes** e no prontuário de cada paciente: mudar data ou
+  procedimento, não enviar, criar a partir da lista de procedimentos.
 
 Exemplo de envio:
 ```json

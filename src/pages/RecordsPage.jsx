@@ -17,7 +17,7 @@ export function RecordsPage() {
     [q, inText],
   );
   const { data: recent = [] } = useLoad(
-    () => must(supabase.from('record_entries').select('id, entry_at, content, patient:patients(id, full_name), author:staff(full_name)').order('created_at', { ascending: false }).limit(30)),
+    () => must(supabase.from('record_entries').select('id, entry_at, content, patient:patients(id, full_name)').order('created_at', { ascending: false }).limit(30)),
     [],
   );
 
@@ -54,7 +54,7 @@ export function RecordsPage() {
               <Link key={e.id} to={`/prontuario/${e.patient?.id}`} className="patient-card" style={{ borderBottom: '1px solid var(--border)', alignItems: 'flex-start' }}>
                 <Avatar name={e.patient?.full_name} />
                 <div style={{ minWidth: 0 }}>
-                  <div className="nm">{e.patient?.full_name} <span className="small muted">· {formatDay(localDay(e.entry_at))}{e.author ? ` · ${e.author.full_name}` : ''}</span></div>
+                  <div className="nm">{e.patient?.full_name} <span className="small muted">· {formatDay(localDay(e.entry_at))}</span></div>
                   <div className="meta" style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 700 }}>{e.content}</div>
                 </div>
               </Link>
