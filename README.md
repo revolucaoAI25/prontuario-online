@@ -65,7 +65,8 @@ Os demais logins (secretárias, profissionais) são criados em **Ajustes → Usu
   `POST` por envio, uma vez por dia. Formato do JSON abaixo.
 - **WhatsApp (Evolution API)**: com `EVOLUTION_API_URL`/`EVOLUTION_API_KEY` definidos, o botão
   **Conectar** cria a instância da clínica, configura o webhook e mostra o QR Code. Pode ser o mesmo
-  servidor Evolution de outro projeto (instância separada).
+  servidor Evolution de outro projeto (instância separada). Na tela **WhatsApp** a equipe vê as
+  conversas e também pode enviar mensagens (texto) pelo número da clínica.
 
 ## Lembretes de retorno
 - Só contam atendimentos registrados no sistema novo: o histórico importado do FastClinic não gera
@@ -80,19 +81,23 @@ Os demais logins (secretárias, profissionais) são criados em **Ajustes → Usu
 - A fila pode ser ajustada na tela **Lembretes** e no prontuário de cada paciente: mudar data ou
   procedimento, não enviar, criar a partir da lista de procedimentos.
 
-Exemplo de envio:
+Exemplo de envio (resumido; o JSON completo está em [`docs/WEBHOOKS.md`](docs/WEBHOOKS.md)):
 ```json
 {
   "tipo": "lembrete_retorno",
   "lembrete_id": "…",
-  "paciente": { "id": "…", "nome": "Maria Souza", "primeiro_nome": "Maria", "telefone": "(31) 99999-0000", "whatsapp": "5531999990000" },
-  "procedimento": { "id": "…", "nome": "Botox" },
-  "ultimo_atendimento": "2026-07-02",
-  "vencimento": "2026-11-02",
-  "tentativa": 1
+  "paciente": { "id": "…", "nome": "Maria Souza", "primeiro_nome": "Maria", "whatsapp": "5531999990000", "…": "…" },
+  "procedimento": { "id": "…", "nome": "Botox", "retorno_em_meses": 4 },
+  "data_ultima_vez": "2026-06-27",
+  "dias_desde_ultima_vez": 122,
+  "data_retorno_prevista": "2026-10-27",
+  "atendimento_de_origem": { "agenda": { "nome": "Dr. Everson Rezeck" }, "data": "2026-06-27", "inicio": "15:20", "procedimentos": ["Botox"], "…": "…" },
+  "agendamentos_futuros": [],
+  "historico": { "total_atendimentos": 12, "…": "…" },
+  "resumo": "Maria Souza, 40 anos. Paciente desde 2015, …"
 }
 ```
-Aniversário: `{ "tipo": "aniversario", "paciente": {…}, "data_nascimento": "1985-11-02", "idade": 41 }`.
+Aniversário: `{ "tipo": "aniversario", "paciente": {…}, "data_nascimento": "1985-11-02", "idade": 41, "agendamentos_futuros": [] }`.
 Com `WEBHOOK_SIGNING_SECRET` definido, cada envio traz `x-clinica-assinatura: sha256=<HMAC do corpo>`.
 Respostas fora de 2xx são reenviadas mais tarde (até 5 tentativas).
 

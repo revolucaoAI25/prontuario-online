@@ -1,7 +1,11 @@
 import { ApiError } from './http.js';
+import { queryOne } from './db.js';
+import { storeEvolutionEvent } from './evolution.js';
+import { whatsappNumber } from './patient-context.js';
 
 // Manages the clinic's instance on an Evolution API (v2) server: create it if
-// missing, point its webhook at this app, show the QR code, report status.
+// missing, point its webhook at this app, show the QR code, report status,
+// and send text messages from the conversations screen.
 // The server URL and global key live only in server env vars.
 const WEBHOOK_EVENTS = ['MESSAGES_UPSERT', 'SEND_MESSAGE'];
 
@@ -111,4 +115,41 @@ export async function whatsappDisconnect() {
   const { status, json } = await evo(`/instance/logout/${encodeURIComponent(instance)}`, { method: 'DELETE' });
   if (status >= 400 && status !== 404) fail(status, json);
   return { estado: 'close' };
+}
+
+const MAX_TEXT = 4096;
+
+// POST /api/whatsapp/enviar — any logged-in staff member. The destination is
+// the conversation's phone (or chat id), or a patient's phone.
+export async function whatsappSend(body, _req, staff) {
+  const { url, key, instance } = config();
+  if (!url || !key) throw new ApiError(400, 'configuracao_incompleta', 'O WhatsApp da clínica ainda não foi configurado.');
+  const text = String(body.texto ?? '').trim();
+  if (!text) throw new ApiError(400, 'campo_obrigatorio', 'Escreva a mensagem.', { campo: 'texto' });
+  if (text.length > MAX_TEXT) throw new ApiError(400, 'campo_invalido', `A mensagem passa de ${MAX_TEXT} caracteres.`, { campo: 'texto' });
+
+  let number = whatsappNumber(body.telefone);
+  if (!number && body.paciente_id) {
+    const patient = await queryOne(`select phone_digits from patients where id = $1`, [String(body.paciente_id)]);
+    number = whatsappNumber(patient?.phone_digits);
+  }
+  if (!number && /^[\w.-]+@(s\.whatsapp\.net|lid)$/.test(String(body.remote_jid ?? ''))) number = body.remote_jid;
+  if (!number) throw new ApiError(400, 'campo_invalido', 'Telefone inválido para WhatsApp.', { campo: 'telefone' });
+
+  const state = await connectionState();
+  if (state !== 'open') throw new ApiError(409, 'whatsapp_desconectado', 'O WhatsApp da clínica está desconectado. Peça ao administrador para conectar em Ajustes.');
+
+  const { status, json } = await evo(`/message/sendText/${encodeURIComponent(instance)}`, {
+    method: 'POST',
+    body: { number, text },
+  });
+  if (status >= 400) {
+    const detail = JSON.stringify(json?.response?.message ?? json?.message ?? '');
+    if (/exists"?\s*:\s*false/.test(detail)) throw new ApiError(400, 'numero_sem_whatsapp', 'Esse número não tem WhatsApp.');
+    fail(status, json);
+  }
+  // Store it right away (with who sent it); Evolution's webhook for the same
+  // message is then a no-op.
+  await storeEvolutionEvent({ event: 'send.message', instance, data: json }, { sentBy: staff.id });
+  return { enviado: true, mensagem_id: json?.key?.id ?? null };
 }

@@ -62,7 +62,7 @@ function parseDuration(value, field = 'duracao_minutos') {
   return minutes;
 }
 
-function parseUuid(value, field) {
+export function parseUuid(value, field) {
   if (!UUID_RE.test(String(value ?? ''))) throw invalid(field, `"${field}" precisa ser um id válido.`);
   return String(value);
 }
@@ -138,7 +138,7 @@ async function resolveTypes(value, agendaId) {
 
 // ------------------------------------------------------------- formatting
 
-const APPOINTMENT_SELECT = `
+export const APPOINTMENT_SELECT = `
   select a.id, a.agenda_id, ag.name as agenda_name, a.appointment_type_id, t.name as type_name,
          a.patient_id, p.full_name as patient_name, p.phone as patient_phone,
          to_char(a.starts_at at time zone '${TZ}', 'YYYY-MM-DD') as day,
@@ -154,7 +154,7 @@ const APPOINTMENT_SELECT = `
   left join appointment_procedures ap on ap.appointment_id = a.id
   left join procedures pr on pr.id = ap.procedure_id`;
 
-const APPOINTMENT_GROUP = `group by a.id, ag.name, ag.sort_order, t.name, p.full_name, p.phone`;
+export const APPOINTMENT_GROUP = `group by a.id, ag.name, ag.sort_order, t.name, p.full_name, p.phone`;
 
 export function formatAppointment(row) {
   return {
@@ -428,7 +428,7 @@ export async function reschedule(body) {
   return { agendamento: await loadAppointment(id) };
 }
 
-async function upcomingFor(patientIds) {
+export async function upcomingFor(patientIds) {
   if (patientIds.length === 0) return new Map();
   const { rows } = await query(
     `${APPOINTMENT_SELECT}

@@ -10,8 +10,8 @@ Guarde cada chave num gerenciador de senhas à medida que for criando.
 1. Em [supabase.com](https://supabase.com) → **New project**.
    - Nome: `clinica-rezeck`. Região: **South America (São Paulo)**.
    - Crie uma senha forte para o banco e guarde (é a `SENHA` das conexões abaixo).
-   - Plano: pode começar no Free para montar e testar; **mude para Pro antes da virada**
-     (backup diário automático).
+   - Plano: pode começar no Free para montar e testar; antes da virada, veja a seção
+     **9. Backup** (recomendação: Pro, que tem backup diário automático).
 2. **Criar as tabelas.** Menu **SQL Editor** → **New query**. Cole e rode, **um por vez e nesta
    ordem**, o conteúdo de cada arquivo da pasta `supabase/migrations` do repositório:
    `…001_base.sql`, `…002_patients_records.sql`, `…003_scheduling.sql`, `…004_reminders.sql`,
@@ -87,6 +87,10 @@ um número, com webhook próprio — não interfere no outro projeto).
 2. No celular da clínica: WhatsApp → **Aparelhos conectados → Conectar um aparelho** → leia o QR.
    O status muda para **Conectado**.
 3. Mande uma mensagem de teste para o número da clínica: ela aparece em **WhatsApp** no menu.
+4. Responda pela tela **WhatsApp** do sistema: a mensagem sai pelo número da clínica e aparece no
+   celular também, com o nome de quem enviou registrado no sistema. **Nova conversa** começa uma
+   conversa com qualquer paciente cadastrado. (Recomende à equipe responder pelo celular sempre
+   que possível; o envio pelo sistema é para quando for mais prático.)
 
 Observação: se o número da clínica estiver na API oficial (Cloud API), ele não aceita conexão por
 QR Code; nesse caso o espelho precisa ser feito pelo provedor oficial.
@@ -96,11 +100,14 @@ QR Code; nesse caso o espelho precisa ser feito pelo provedor oficial.
 1. **Ajustes → Lembretes e integrações**: preencha
    - **Webhook dos lembretes**: URL do fluxo (n8n/Chatflux) que manda a mensagem de retorno;
    - **Webhook de aniversário**: URL do fluxo de parabéns;
-   e salve. O formato do que chega está no `README.md`. Todo dia às 9h o sistema envia os que
-   venceram.
+   e salve. O JSON que chega (paciente, procedimento, última vez, data prevista, atendimento de
+   origem, histórico, agendamentos) está em `docs/WEBHOOKS.md`. Todo dia às 9h o sistema envia
+   os que venceram.
 2. **Ajustes → Procedimentos e retornos**: confira os prazos (Botox 4 meses, etc.).
 3. **API de agendamento** para a IA: endereço `https://SEU-DOMINIO/api/agenda/...`, cabeçalho
    `x-api-key: <CLINIC_API_KEY>`. Os exemplos de chamada estão em `docs/API.md`.
+   Para dar contexto à IA no início de cada conversa, chame `/api/pacientes/contexto` com o
+   telefone de quem escreveu.
 
 ## 7. Dia da virada
 
@@ -119,3 +126,26 @@ QR Code; nesse caso o espelho precisa ser feito pelo provedor oficial.
 - [ ] Mensagem em **Equipe** toca o aviso no computador de outra pessoa.
 - [ ] WhatsApp conectado e mensagens aparecendo.
 - [ ] Uma chamada de teste da IA em `/api/agenda/disponibilidade` responde.
+
+## 9. Backup
+
+Estar na nuvem protege contra o servidor quebrar, mas **não** contra:
+- alguém apagar um paciente ou um prontuário por engano;
+- uma importação ou um erro de sistema estragar dados;
+- perder o acesso à conta (cartão recusado, senha vazada, projeto apagado).
+
+O prontuário precisa ser guardado por 20 anos (Lei 13.787/2018 e normas do CFM), então
+**não recomendo ficar sem backup**. As opções:
+
+| Opção | Custo | Quanto pode perder | Como restaura |
+|---|---|---|---|
+| **Supabase Pro** (recomendado) | US$ 25/mês | até 1 dia | um clique no painel (guarda os últimos 7 dias) |
+| Free + cópia semanal própria | grátis | até 7 dias | eu restauro a partir do arquivo |
+| Sem backup | grátis | tudo | não tem como |
+
+- No **Pro** é automático: **Database → Backups** mostra as cópias diárias e o botão *Restore*.
+- A **cópia própria** é um `pg_dump` (arquivo único com o banco inteiro), criptografado com uma
+  senha, guardado fora do Supabase (ex.: no Google Drive da clínica). Pode ser automática toda
+  semana. Vale ter também no Pro, uma vez por mês, porque protege contra perder a conta.
+- Os arquivos anexados ao prontuário (PDFs, fotos) ficam no *Storage* e **não** entram no backup
+  diário do Supabase; a cópia própria pode incluí-los.

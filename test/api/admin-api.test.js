@@ -30,6 +30,14 @@ const evoServer = http.createServer((req, res) => {
     if (action === 'connect') return send(200, { base64: 'data:image/png;base64,QR2', pairingCode: 'EFGH5678' });
     if (area === 'webhook' && action === 'set') { instance.webhook = body.webhook; return send(201, body); }
     if (action === 'logout') { instance.state = 'close'; return send(200, {}); }
+    if (area === 'message' && action === 'sendText') {
+      if (body.number === '5531900000000') return send(400, { response: { message: [{ exists: false, number: body.number }] } });
+      const id = `MSG${evo.calls.length}`;
+      return send(201, {
+        key: { remoteJid: `${body.number}@s.whatsapp.net`, fromMe: true, id },
+        message: { conversation: body.text }, messageType: 'conversation', messageTimestamp: 1793000000, status: 'PENDING',
+      });
+    }
     return send(404, {});
   });
 }).listen(0);
@@ -151,4 +159,44 @@ test('WhatsApp panel: admin only, and a wrong Evolution key is explained', async
   const res = await call('whatsapp_status', {}, await login('admin@t.dev'));
   assert.equal(res.body.erro.codigo, 'evolution_chave_invalida');
   process.env.EVOLUTION_API_KEY = 'chave-global';
+});
+
+const send = async (body, token) => {
+  const res = await fetch(base.replace('/admin', '/whatsapp/enviar'), {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) },
+    body: JSON.stringify(body),
+  });
+  return { status: res.status, body: await res.json() };
+};
+
+test('WhatsApp: any staff member can send; the message is stored once, with who sent it', async () => {
+  const rec = await login('rec@t.dev');
+  await db.query(`update staff set active = true where id = '00000000-0000-0000-0000-0000000000a2'`);
+  assert.equal((await send({ telefone: '31987650000', texto: 'Oi' })).status, 401);
+
+  evo.instances.get('clinica-teste').state = 'close';
+  assert.equal((await send({ telefone: '31987650000', texto: 'Oi' }, rec)).body.erro.codigo, 'whatsapp_desconectado');
+  evo.instances.get('clinica-teste').state = 'open';
+
+  assert.equal((await send({ telefone: '31987650000', texto: '  ' }, rec)).body.erro.codigo, 'campo_obrigatorio');
+  assert.equal((await send({ telefone: '(31) 90000-0000', texto: 'Oi' }, rec)).body.erro.codigo, 'numero_sem_whatsapp');
+
+  const patient = (await db.query(`insert into patients (full_name, phone) values ('Paula Envio', '(31) 98765-0000') returning id`)).rows[0].id;
+  const sent = await send({ paciente_id: patient, texto: 'Olá, Paula! Tudo bem?' }, rec);
+  assert.equal(sent.status, 200);
+  assert.deepEqual(evo.calls.at(-1).body, { number: '5531987650000', text: 'Olá, Paula! Tudo bem?' });
+
+  // Evolution's own SEND_MESSAGE webhook for the same message arrives later
+  const hook = await fetch(`${base.replace('/admin', '/webhooks/evolution')}?secret=segredo-webhook`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ event: 'send.message', instance: 'clinica-teste', data: { key: { remoteJid: '5531987650000@s.whatsapp.net', fromMe: true, id: sent.body.mensagem_id }, message: { conversation: 'Olá, Paula! Tudo bem?' }, messageTimestamp: 1793000000 } }),
+  });
+  assert.equal(hook.status, 200);
+  const { rows } = await db.query(`select m.*, s.full_name as sender from whatsapp_messages m left join staff s on s.id = m.sent_by where m.wa_message_id = $1`, [sent.body.mensagem_id]);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].sender, 'Recepção');
+  assert.equal(rows[0].patient_id, patient);
+  assert.equal(rows[0].from_me, true);
 });

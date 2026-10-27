@@ -18,7 +18,7 @@ before(async () => {
   resetDatabase();
   db = await connect();
   monday = await futureWeekday(db, 1, 7);
-  tuesday = await futureWeekday(db, 2, 7);
+  tuesday = (await db.query(`select ($1::date + 1)::text as d`, [monday])).rows[0].d;
   server = createDevServer().listen(0);
   base = `http://localhost:${server.address().port}/api`;
 });
@@ -196,4 +196,49 @@ test('patients: search by phone returns upcoming appointments; register is idemp
   assert.equal(again.ja_existia, true);
   assert.equal(again.paciente.id, created.paciente.id);
   assert.equal(again.paciente.email, 'marta@ex.com', 'missing fields are filled in');
+});
+
+test('patients/contexto: history summary, procedures, pending returns and what is booked, by phone', async () => {
+  const patient = (await db.query(
+    `insert into patients (full_name, phone, birth_date) values ('Helena Contexto', '(31) 97777-1212', (clinic_today() - interval '35 years')::date) returning id`,
+  )).rows[0].id;
+  const estetica = (await db.query(`select id from agendas where name = 'Estética'`)).rows[0].id;
+  const past = async (monthsAgo, status, procedures) => {
+    const { rows } = await db.query(
+      `insert into appointments (agenda_id, patient_id, starts_at, ends_at, status)
+       values ($1, $2, local_timestamp((clinic_today() - make_interval(months => $3))::date, '10:00'),
+               local_timestamp((clinic_today() - make_interval(months => $3))::date, '11:00'), $4) returning id`,
+      [estetica, patient, monthsAgo, status],
+    );
+    if (procedures.length) await db.query(`select add_appointment_procedures($1, $2)`, [rows[0].id, procedures]);
+  };
+  await past(14, 'chegou', ['Limpeza de pele']);
+  await past(5, 'nao_compareceu', []);
+  await past(2, 'chegou', ['Botox', 'Limpeza de pele']);
+  await call('agenda/agendar', { agenda: 'Estética', data: brDate(tuesday), horario: '14:00', paciente_id: patient, procedimentos: ['Hidratação'] });
+
+  // WhatsApp-style number: country code, no punctuation
+  const { status, body } = await call('pacientes/contexto', { telefone: '5531977771212' });
+  assert.equal(status, 200);
+  assert.equal(body.encontrado, true);
+  const ctx = body.pacientes[0];
+  assert.equal(ctx.paciente.nome, 'Helena Contexto');
+  assert.equal(ctx.paciente.idade, 35);
+  assert.equal(ctx.paciente.whatsapp, '5531977771212');
+  assert.equal(ctx.historico.total_atendimentos, 2);
+  assert.equal(ctx.historico.faltas, 1);
+  assert.deepEqual(ctx.historico.ultimo_atendimento.procedimentos, ['Botox', 'Limpeza de pele']);
+  assert.equal(ctx.historico.ultimo_atendimento.agenda.nome, 'Estética');
+  assert.deepEqual(ctx.historico.procedimentos_realizados.map((p) => [p.nome, p.vezes]).sort(), [['Botox', 1], ['Limpeza de pele', 2]]);
+  assert.equal(ctx.historico.ultimos_agendamentos.length, 3);
+  assert.equal(ctx.agendamentos_futuros.length, 1);
+  assert.equal(ctx.agendamentos_futuros[0].data, tuesday);
+  assert.equal(ctx.agendamentos_futuros[0].inicio, '14:00');
+  assert.deepEqual(ctx.agendamentos_futuros[0].procedimentos, ['Hidratação']);
+  assert.deepEqual(ctx.retornos_pendentes.map((r) => r.procedimento).sort(), ['Botox', 'Limpeza de pele']);
+  assert.match(ctx.resumo, /Helena Contexto, 35 anos\. .*2 atendimento\(s\).*Agendamentos futuros: .* às 14:00 na agenda Estética/);
+
+  const none = (await call('pacientes/contexto', { telefone: '(11) 90000-0001' })).body;
+  assert.deepEqual([none.encontrado, none.total], [false, 0]);
+  assert.equal((await call('pacientes/contexto', {})).body.erro.codigo, 'campo_obrigatorio');
 });

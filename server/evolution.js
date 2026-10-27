@@ -59,16 +59,19 @@ export function parseEvolutionEvent(payload) {
   return out;
 }
 
-export async function storeEvolutionEvent(payload) {
+// `sentBy` marks a message sent from the system; Evolution's own webhook for
+// it may arrive before or after, and either way the row keeps the sender.
+export async function storeEvolutionEvent(payload, { sentBy = null } = {}) {
   const messages = parseEvolutionEvent(payload);
   let stored = 0;
   for (const m of messages) {
     const { rowCount } = await query(
       `insert into whatsapp_messages (instance, wa_message_id, remote_jid, phone_digits, patient_id, from_me,
-                                      push_name, message_type, body, sent_at, raw)
-       values ($1, $2, $3, $4, match_patient_by_phone($4), $5, $6, $7, $8, $9, $10)
-       on conflict (instance, wa_message_id) do nothing`,
-      [m.instance, m.wa_message_id, m.remote_jid, m.phone_digits, m.from_me, m.push_name, m.message_type, m.body, m.sent_at, m.raw],
+                                      push_name, message_type, body, sent_at, raw, sent_by)
+       values ($1, $2, $3, $4, match_patient_by_phone($4), $5, $6, $7, $8, $9, $10, $11)
+       on conflict (instance, wa_message_id) do update set sent_by = excluded.sent_by
+       where excluded.sent_by is not null and whatsapp_messages.sent_by is null`,
+      [m.instance, m.wa_message_id, m.remote_jid, m.phone_digits, m.from_me, m.push_name, m.message_type, m.body, m.sent_at, m.raw, sentBy],
     );
     stored += rowCount;
   }

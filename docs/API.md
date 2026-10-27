@@ -85,6 +85,43 @@ Um dos campos: `telefone`, `cpf`, `nome` ou `id`. Traz os próximos agendamentos
 Mesmos campos do objeto `paciente`. Se já existir (CPF ou telefone + nome), completa os campos
 vazios e responde `ja_existia: true`.
 
+### `POST /pacientes/contexto`
+Quem é esse número e o que já aconteceu com ele — feito para a IA chamar no início de cada
+conversa.
+```json
+{ "telefone": "5531999990000" }
+```
+Aceita o telefone em qualquer formato (com ou sem 55, DDD, traços), ou `id`. Um telefone pode
+ser de mais de um paciente (mãe e filha): vêm todos, o mais recente primeiro.
+```json
+{
+  "ok": true, "encontrado": true, "total": 1,
+  "pacientes": [{
+    "paciente": { "id": "...", "nome": "Maria Souza", "primeiro_nome": "Maria", "telefone": "(31) 99999-0000",
+                  "telefone_2": null, "whatsapp": "5531999990000", "email": "maria@exemplo.com",
+                  "data_nascimento": "1985-11-02", "idade": 40, "aceita_mensagens": true },
+    "historico": {
+      "total_atendimentos": 12, "primeiro_atendimento": "2015-03-10",
+      "ultimo_atendimento": { "agenda": { "nome": "Dr. Everson Rezeck" }, "data": "2026-06-27", "inicio": "15:20", "procedimentos": ["Botox"], "...": "..." },
+      "faltas": 1, "cancelamentos": 2,
+      "procedimentos_realizados": [{ "nome": "Botox", "vezes": 5, "ultima_vez": "2026-06-27" }],
+      "agendas": [{ "nome": "Dr. Everson Rezeck", "atendimentos": 9 }],
+      "ultimos_agendamentos": [ "...5 últimos (objeto agendamento)..." ],
+      "prontuario": { "anotacoes": 14, "ultima_anotacao": "2026-06-27" }
+    },
+    "agendamentos_futuros": [{ "agenda": { "nome": "Simone Rezeck" }, "tipo": { "nome": "Consulta" },
+                               "data": "2026-11-10", "inicio": "14:00", "fim": "14:40",
+                               "status": "confirmado", "procedimentos": [], "observacao": "..." }],
+    "retornos_pendentes": [{ "procedimento": "Botox", "ultima_vez": "2026-06-27", "previsto_para": "2026-10-27" }],
+    "resumo": "Maria Souza, 40 anos. Paciente desde 2015, 12 atendimento(s); último em 27/06/2026 na agenda Dr. Everson Rezeck (Botox). ... Agendamentos futuros: 10/11/2026 às 14:00 na agenda Simone Rezeck (Consulta) — confirmado pelo paciente."
+  }]
+}
+```
+- `resumo` é um texto pronto para colocar no contexto da IA.
+- `agendamentos_futuros` inclui os agendados, confirmados e os que pediram para remarcar.
+- O texto do prontuário **não** é enviado (só quantas anotações existem).
+- Não encontrado: `{ "ok": true, "encontrado": false, "total": 0, "pacientes": [] }`.
+
 ## Objeto agendamento
 ```json
 {

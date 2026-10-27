@@ -86,6 +86,8 @@ create table whatsapp_messages (
     body text,
     sent_at timestamptz not null,
     raw jsonb,
+    -- staff member who sent it from the system (null: sent from the phone)
+    sent_by uuid references staff (id) on delete set null,
     created_at timestamptz not null default now(),
     unique (instance, wa_message_id)
 );
@@ -111,7 +113,10 @@ from (
         m.remote_jid,
         m.phone_digits,
         coalesce(m.patient_id, match_patient_by_phone(m.phone_digits)) as patient_id,
-        m.push_name,
+        -- our own messages carry no contact name; use the latest one they sent
+        coalesce(m.push_name, (select x.push_name from whatsapp_messages x
+                               where x.remote_jid = m.remote_jid and x.push_name is not null
+                               order by x.sent_at desc limit 1)) as push_name,
         m.body as last_body,
         m.from_me as last_from_me,
         m.sent_at as last_at,

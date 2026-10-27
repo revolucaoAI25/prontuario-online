@@ -93,6 +93,17 @@ test('due reminders are posted once, signed, then marked as sent', async () => {
   assert.equal(payload.procedimento.nome, 'Botox');
   assert.equal(payload.paciente.primeiro_nome, 'Lara');
   assert.equal(payload.paciente.whatsapp, '5531987651111');
+  assert.equal(payload.procedimento.retorno_em_meses, 4);
+  assert.equal(payload.data_retorno_prevista, payload.data_ultima_vez && (await one(db, `select due_on::text as d from reminders where patient_id = $1`, [patient])).d);
+  assert.match(payload.data_ultima_vez, /^\d{4}-\d{2}-\d{2}$/);
+  assert.ok(payload.dias_desde_ultima_vez >= 118 && payload.dias_desde_ultima_vez <= 124);
+  assert.equal(payload.vezes_que_fez, 1);
+  assert.equal(payload.atendimento_de_origem.agenda.nome, 'Estética');
+  assert.deepEqual(payload.atendimento_de_origem.procedimentos, ['Botox']);
+  assert.equal(payload.atendimento_de_origem.data, payload.data_ultima_vez);
+  assert.equal(payload.historico.total_atendimentos, 1);
+  assert.deepEqual(payload.agendamentos_futuros, []);
+  assert.match(payload.resumo, /^Lara Lembrete\./);
   const expected = `sha256=${createHmac('sha256', 'segredo-assinatura').update(mine[0].raw).digest('hex')}`;
   assert.equal(mine[0].signature, expected);
   assert.ok(body.lembretes.enviados >= 1);
@@ -126,6 +137,7 @@ test('birthdays are posted with the age', async () => {
   await cron();
   const payload = received.find((r) => r.body.tipo === 'aniversario' && r.body.paciente.id === patient)?.body;
   assert.equal(payload.idade, 41);
+  assert.equal(payload.paciente.data_nascimento, payload.data_nascimento);
   assert.equal(payload.paciente.whatsapp, '5531987653333');
 });
 
@@ -175,4 +187,11 @@ test('Evolution groups, reactions and statuses are ignored; @lid chats use the s
   assert.equal(row.patient_id, patient);
   assert.equal(row.body, 'foto do resultado');
   assert.equal(row.message_type, 'imageMessage');
+});
+
+test('a conversation keeps the contact name after we reply', async () => {
+  await evolution(upsert({ remoteJid: '5531955556666@s.whatsapp.net', fromMe: false, id: 'NOME1' }, { conversation: 'Oi' }, { pushName: 'Bruno' }));
+  await evolution(upsert({ remoteJid: '5531955556666@s.whatsapp.net', fromMe: true, id: 'NOME2' }, { conversation: 'Olá!' }, { messageTimestamp: 1793000100 }));
+  const conv = await one(db, `select push_name, last_body, last_from_me from whatsapp_conversations where remote_jid = '5531955556666@s.whatsapp.net'`);
+  assert.deepEqual([conv.push_name, conv.last_body, conv.last_from_me], ['Bruno', 'Olá!', true]);
 });
