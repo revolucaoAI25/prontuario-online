@@ -5,3 +5,4 @@ dist/
 !.env.example
 .vercel/
 __pycache__/
+.dev-storage/

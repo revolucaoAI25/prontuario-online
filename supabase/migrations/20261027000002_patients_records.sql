@@ -79,29 +79,49 @@ create table note_shortcuts (
 -- Name / phone / CPF search used by the patients list, the agenda and the
 -- record screen. When p_include_records is true it also matches text inside
 -- the patient's record entries.
+--
+-- Security definer on purpose: under RLS Postgres cannot use the trigram
+-- indexes for these expressions (non-leakproof functions), which made the
+-- record-text search scan all entries. Access is checked here instead: app
+-- users must be staff; direct server connections (no JWT) are trusted.
 create function search_patients(p_query text, p_limit integer default 30, p_include_records boolean default false)
 returns setof patients
-language sql stable as $$
-    with q as (
-        select normalize_text(btrim(p_query)) as text, only_digits(p_query) as digits
-    )
+language plpgsql stable security definer set search_path = public as $$
+declare
+    v_claims text := nullif(current_setting('request.jwt.claims', true), '');
+    v_text text := normalize_text(btrim(p_query));
+    v_like text := '%' || normalize_text(btrim(p_query)) || '%';
+    v_digits text := only_digits(p_query);
+begin
+    if v_claims is not null and (v_claims::jsonb ->> 'role') is distinct from 'service_role' and not is_staff() then
+        return;
+    end if;
+    if v_text = '' then
+        return;
+    end if;
+    return query
     select p.*
-    from patients p, q
-    where q.text <> ''
-      and (
-        normalize_text(p.full_name) like '%' || q.text || '%'
-        or (length(q.digits) >= 4 and (
-            p.phone_digits like '%' || q.digits || '%'
-            or only_digits(p.phone_alt) like '%' || q.digits || '%'
-            or only_digits(p.cpf) like '%' || q.digits || '%'
-        ))
-        or (p_include_records and exists (
-            select 1 from record_entries r
-            where r.patient_id = p.id and normalize_text(r.content) like '%' || q.text || '%'
-        ))
-      )
-    order by
-        (normalize_text(p.full_name) like q.text || '%') desc,
-        p.full_name
-    limit p_limit
+    from patients p
+    where normalize_text(p.full_name) like v_like
+       or (length(v_digits) >= 4 and (
+            p.phone_digits like '%' || v_digits || '%'
+            or only_digits(p.phone_alt) like '%' || v_digits || '%'
+            or only_digits(p.cpf) like '%' || v_digits || '%'
+       ))
+       or (p_include_records and p.id in (
+            select r.patient_id from record_entries r where normalize_text(r.content) like v_like
+       ))
+    order by (normalize_text(p.full_name) like v_text || '%') desc, p.full_name
+    limit p_limit;
+end;
+$$;
+
+revoke execute on function search_patients(text, integer, boolean) from public;
+do $$
+begin
+    if exists (select 1 from pg_roles where rolname = 'authenticated') then
+        revoke execute on function search_patients(text, integer, boolean) from anon;
+        grant execute on function search_patients(text, integer, boolean) to authenticated, service_role;
+    end if;
+end;
 $$;

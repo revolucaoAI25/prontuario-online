@@ -401,3 +401,13 @@ language sql security definer set search_path = public as $$
         status = case when attempts >= 5 then 'erro' else status end
     where id = p_message_id
 $$;
+
+-- Patients whose birthday is on a given day (for the Lembretes screen).
+create function birthdays_on(p_day date default clinic_today()) returns setof patients
+language sql stable as $$
+    select * from patients
+    where birth_date is not null
+      and extract(month from birth_date) = extract(month from p_day)
+      and is_birthday(birth_date, p_day)
+    order by full_name
+$$;

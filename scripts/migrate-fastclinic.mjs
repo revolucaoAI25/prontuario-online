@@ -369,7 +369,7 @@ async function importAppointments(ms, pgc, agendaIds) {
        )
        insert into appointments (legacy_id, agenda_id, appointment_type_id, patient_id, starts_at, ends_at,
                                  status, notes, source, legacy_synced_at)
-       select legacy_id, agenda_id, type_id, patient_id, starts_at, starts_at + make_interval(mins => duration),
+       select legacy_id, agenda_id, type_id, patient_id, starts_at, default_end(agenda_id, starts_at, duration),
               status, notes, 'legado', now()
        from typed
        on conflict (legacy_id) do update set

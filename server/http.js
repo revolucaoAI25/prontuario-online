@@ -65,9 +65,11 @@ async function readBody(req) {
   return raw ? JSON.parse(raw) : {};
 }
 
-// Wraps a Vercel-style handler: CORS, API key, JSON body, error translation.
-// `routes` maps the dynamic path segment to a function(body, req) => result.
-export function apiRouter(routes, { param = 'acao', keyEnv = 'CLINIC_API_KEY' } = {}) {
+// Wraps a Vercel-style handler: CORS, auth, JSON body, error translation.
+// `routes` maps the dynamic path segment to a function(body, req, auth) => result.
+// Auth is the clinic API key by default, or a custom `authorize(req)` (e.g. a
+// logged-in admin) whose result is passed to the route as `auth`.
+export function apiRouter(routes, { param = 'acao', keyEnv = 'CLINIC_API_KEY', authorize } = {}) {
   return async function handler(req, res) {
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Headers', 'content-type, x-api-key, authorization');
@@ -78,7 +80,10 @@ export function apiRouter(routes, { param = 'acao', keyEnv = 'CLINIC_API_KEY' } 
     }
 
     try {
-      if (!keyMatches(apiKeyFrom(req), process.env[keyEnv])) {
+      let auth = null;
+      if (authorize) {
+        auth = await authorize(req);
+      } else if (!keyMatches(apiKeyFrom(req), process.env[keyEnv])) {
         throw new ApiError(401, 'nao_autorizado', 'Chave de API ausente ou inválida.');
       }
       if (req.method !== 'POST') {
@@ -95,7 +100,7 @@ export function apiRouter(routes, { param = 'acao', keyEnv = 'CLINIC_API_KEY' } 
       } catch {
         throw new ApiError(400, 'json_invalido', 'O corpo da requisição não é um JSON válido.');
       }
-      const result = await route(body ?? {}, req);
+      const result = await route(body ?? {}, req, auth);
       send(res, 200, { ok: true, ...result });
     } catch (error) {
       const apiError = translateError(error);

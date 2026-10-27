@@ -135,6 +135,24 @@ test('patient search matches accents, phone digits and record text', async () =>
   assert.deepEqual(await search('ultraformer', true), ['José Antônio Lima']);
 });
 
+test('patient search returns nothing to non-staff and cannot be called anonymously', async () => {
+  await createPatient(db, { name: 'Oculta Da Silva' });
+  const asRole = async (claims, sql) => {
+    await db.query('begin');
+    try {
+      await db.query(`select set_config('request.jwt.claims', $1, true)`, [JSON.stringify(claims)]);
+      await db.query(`set local role ${claims.role}`);
+      return (await db.query(sql)).rows;
+    } finally {
+      await db.query('rollback');
+    }
+  };
+  const query = `select full_name from search_patients('oculta')`;
+  assert.equal((await asRole({ sub: admin, role: 'authenticated' }, query)).length, 1);
+  assert.equal((await asRole({ sub: outsider, role: 'authenticated' }, query)).length, 0);
+  await expectDbError(asRole({ role: 'anon' }, query), 'permission denied');
+});
+
 test('WhatsApp numbers match patients with or without country code and 9th digit', async () => {
   const p = await createPatient(db, { name: 'Zap Paciente', phone: '(31) 97777-4321' });
   for (const jid of ['5531977774321', '553177774321', '31977774321']) {
