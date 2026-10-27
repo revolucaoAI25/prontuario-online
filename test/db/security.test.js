@@ -175,6 +175,10 @@ test('webhooks are visible and editable only by the super admin; admins cannot t
   assert.equal(await asUser(db, support, async () => (await db.query(`update settings set value = '"https://n8n.exemplo/lembrete"' where key = 'reminder_webhook_url'`)).rowCount), 1);
   assert.equal((await one(db, `select setting_text('reminder_webhook_url') as v`)).v, 'https://n8n.exemplo/lembrete');
 
+  const seenByAdmin = await asUser(db, admin, async () => (await db.query(`select id from staff`)).rows.map((r) => r.id));
+  assert.ok(!seenByAdmin.includes(support), 'the clinic does not see the support login');
+  assert.ok(seenByAdmin.includes(admin) && seenByAdmin.includes(secretaria));
+  assert.ok((await asUser(db, support, async () => (await db.query(`select id from staff`)).rows.map((r) => r.id))).includes(support));
   assert.equal(await asUser(db, admin, async () => (await db.query(`update staff set role = 'secretaria', is_superadmin = false where id = $1`, [support])).rowCount), 0);
   await expectDbError(asUser(db, admin, () => db.query(`update staff set is_superadmin = true where id = $1`, [admin])), 'row-level security');
   assert.equal(await asUser(db, support, async () => (await db.query(`update staff set full_name = 'Suporte' where id = $1`, [support])).rowCount), 1);

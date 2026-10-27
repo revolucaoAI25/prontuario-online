@@ -1,11 +1,12 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
 import {
-  AlertCircle, Check, CheckCheck, Clock, Download, FileText, Mic, MessageCirclePlus, Paperclip, QrCode, RotateCw, Search, Send, Square, Trash2, X,
+  AlertCircle, Check, CheckCheck, Clock, Download, FileText, MessageCircle, Mic, MessageCirclePlus, Paperclip, QrCode, RotateCw, Search, Send, Square, Trash2, X,
 } from 'lucide-react';
 import { supabase, must, callApi } from '../lib/supabase.js';
 import { useInterval, useLoad } from '../lib/hooks.js';
-import { formatDay, localDay, localTime } from '../lib/time.js';
+import { localTime } from '../lib/time.js';
+import { groupMessages, listTime, useStickToBottom } from '../lib/chat.js';
 import { useToast } from '../context/ToastContext.jsx';
 import { Avatar, Empty, Modal } from '../components/ui.jsx';
 import { WhatsAppConnection } from '../components/WhatsAppConnection.jsx';
@@ -16,6 +17,13 @@ const MAX_FILE_BYTES = 50 * 1024 * 1024;
 const norm = (s) => String(s ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
 const digits = (s) => String(s ?? '').replace(/\D/g, '');
 const MEDIA_LABEL = { imagem: '📷 Foto', video: '🎥 Vídeo', audio: '🎤 Áudio', documento: '📄 Documento', figurinha: 'Figurinha' };
+
+function formatPhone(d) {
+  const n = String(d ?? '').replace(/^55(?=\d{10,11}$)/, '');
+  if (n.length === 11) return `(${n.slice(0, 2)}) ${n.slice(2, 7)}-${n.slice(7)}`;
+  if (n.length === 10) return `(${n.slice(0, 2)}) ${n.slice(2, 6)}-${n.slice(6)}`;
+  return d ?? '';
+}
 
 function formatBytes(n) {
   if (!n) return '';
@@ -71,12 +79,13 @@ function StatusIcon({ status }) {
 function MediaContent({ message, url, onRetry }) {
   const kind = message.media_kind;
   if (message.media_status !== 'ok') {
+    const label = { erro: 'Não foi possível baixar o arquivo.', enviando: 'Enviando…', falhou: 'Não enviado.' }[message.media_status] ?? 'Baixando arquivo…';
     return (
       <div className="wa-file">
         <FileText />
         <div className="grow">
           <div className="nm">{MEDIA_LABEL[kind] ?? 'Arquivo'}{message.media_name ? ` · ${message.media_name}` : ''}</div>
-          <div className="small">{message.media_status === 'erro' ? 'Não foi possível baixar o arquivo.' : 'Baixando arquivo…'}</div>
+          <div className="small">{label}</div>
         </div>
         {message.media_status === 'erro' && (
           <button type="button" className="icon-btn" onClick={onRetry} aria-label="Tentar baixar de novo" title="Tentar de novo"><RotateCw /></button>
@@ -146,8 +155,10 @@ function useRecorder() {
   return { recording, seconds, start, stop };
 }
 
-// The clinic's WhatsApp (Evolution API): conversations, attachments, voice
-// notes and delivery status. The inbox is shared by the whole team.
+// The clinic's WhatsApp: conversations, attachments, voice notes and
+// delivery status. The inbox is shared by the whole team.
+const kindOfFile = (file) => (/^image\//.test(file.type) ? 'imagem' : /^video\//.test(file.type) ? 'video' : /^audio\//.test(file.type) ? 'audio' : 'documento');
+
 export function ConversationsPage() {
   const toast = useToast();
   const [jid, setJid] = useState(null);
@@ -157,9 +168,8 @@ export function ConversationsPage() {
   const [query, setQuery] = useState('');
   const [text, setText] = useState('');
   const [files, setFiles] = useState([]);
-  const [sending, setSending] = useState(false);
+  const [pending, setPending] = useState([]);
   const [dragging, setDragging] = useState(false);
-  const threadRef = useRef(null);
   const fileInput = useRef(null);
   const recorder = useRecorder();
   const [connection, setConnection] = useState(null);
@@ -169,7 +179,7 @@ export function ConversationsPage() {
   useInterval(checkConnection, 60000);
   const connected = connection?.estado === 'open';
 
-  const { data: conversations = [], reload } = useLoad(
+  const { data: conversations = [], reload, loading: conversationsLoading } = useLoad(
     () => must(supabase.from('whatsapp_conversations').select('*').order('last_at', { ascending: false }).limit(300)),
     [],
   );
@@ -187,9 +197,14 @@ export function ConversationsPage() {
     return () => { supabase.removeChannel(channel); };
   }, [reload, reloadThread]);
   useInterval(() => { reload(); reloadThread(); }, 15000);
-  useEffect(() => { threadRef.current?.scrollTo(0, threadRef.current.scrollHeight); }, [messages.length, jid]);
 
   const current = draft ?? conversations.find((c) => c.remote_jid === jid);
+  const conversationKey = draft ? `draft-${draft.phone_digits}` : jid;
+  const shownMessages = useMemo(
+    () => (draft ? [] : [...messages, ...pending.filter((p) => p.conversation === conversationKey)]),
+    [draft, messages, pending, conversationKey],
+  );
+  const thread = useStickToBottom(conversationKey, shownMessages.length);
 
   // Opening a conversation (or a new message arriving in it) marks it read.
   const unreadHere = Number(current?.unread_count ?? 0);
@@ -208,9 +223,19 @@ export function ConversationsPage() {
     if (found) { setDraft(null); setJid(found.remote_jid); }
   }, [conversations, draft]);
 
+  // Opened from a patient's record or the agenda: /conversas?paciente=<id>
+  const [params, setParams] = useSearchParams();
+  const fromPatient = params.get('paciente');
+  useEffect(() => {
+    if (!fromPatient || conversationsLoading) return;
+    supabase.from('patients').select('id, full_name, phone').eq('id', fromPatient).maybeSingle().then(({ data }) => {
+      if (data) startWith(data);
+      setParams({}, { replace: true });
+    });
+  }, [fromPatient, conversationsLoading]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const name = (c) => c.patient_name ?? c.push_name ?? c.phone_digits;
-  const shown = conversations.filter((c) => !query.trim() || norm(name(c)).includes(norm(query)) || String(c.phone_digits).includes(query.replace(/\D/g, '') || '#'));
-  let lastDay = null;
+  const listed = conversations.filter((c) => !query.trim() || norm(name(c)).includes(norm(query)) || String(c.phone_digits).includes(query.replace(/\D/g, '') || '#'));
 
   function open(c) {
     setDraft(null);
@@ -244,29 +269,43 @@ export function ConversationsPage() {
 
   const target = () => ({ telefone: current.phone_digits, remote_jid: current.remote_jid, paciente_id: current.patient_id });
 
+  // Each message shows up at once as "sending" and is replaced by the stored
+  // one when the server confirms it.
+  async function deliver(temp, request) {
+    setPending((p) => [...p, temp]);
+    thread.toBottom();
+    try {
+      await request();
+      await Promise.all([reloadThread(), reload()]);
+      setPending((p) => p.filter((m) => m.id !== temp.id));
+    } catch (error) {
+      setPending((p) => p.map((m) => (m.id === temp.id ? { ...m, status: 'erro', media_status: m.media_kind ? 'falhou' : null, failed: true } : m)));
+      toast.error(error);
+    }
+  }
+
+  const tempMessage = (fields) => ({
+    id: `tmp-${Date.now()}-${Math.random()}`, conversation: conversationKey, from_me: true, status: 'pendente', sent_at: new Date().toISOString(), ...fields,
+  });
+
   async function send() {
     const body = text.trim();
-    if ((!body && files.length === 0) || sending || !current) return;
-    setSending(true);
-    try {
-      if (files.length === 0) {
-        await callApi('whatsapp/enviar', { ...target(), texto: body });
-      } else {
-        // the text goes as the caption of the first file
-        for (const [i, file] of files.entries()) {
-          const midia = await uploadForWhatsApp(file);
-          await callApi('whatsapp/enviar', { ...target(), midia, texto: i === 0 ? body : '' });
-          setFiles((prev) => prev.filter((f) => f !== file));
-        }
-      }
-      setText('');
-      setFiles([]);
-      reload();
-      reloadThread();
-    } catch (error) {
-      toast.error(error);
-    } finally {
-      setSending(false);
+    if ((!body && files.length === 0) || !current) return;
+    const to = target();
+    const queue = files;
+    setText('');
+    setFiles([]);
+    if (queue.length === 0) {
+      await deliver(tempMessage({ body }), () => callApi('whatsapp/enviar', { ...to, texto: body }));
+      return;
+    }
+    // the text goes as the caption of the first file
+    for (const [i, file] of queue.entries()) {
+      const caption = i === 0 ? body : '';
+      await deliver(
+        tempMessage({ body: caption || null, media_kind: kindOfFile(file), media_status: 'enviando', media_name: file.name }),
+        async () => callApi('whatsapp/enviar', { ...to, midia: await uploadForWhatsApp(file), texto: caption }),
+      );
     }
   }
 
@@ -281,18 +320,12 @@ export function ConversationsPage() {
     }
     const blob = await recorder.stop();
     if (!blob || blob.size < 1000) return;
-    setSending(true);
-    try {
-      const ext = blob.type.includes('mp4') ? 'm4a' : blob.type.includes('ogg') ? 'ogg' : 'webm';
-      const midia = await uploadForWhatsApp(blob, `audio-${Date.now()}.${ext}`);
-      await callApi('whatsapp/enviar', { ...target(), midia, voz: true });
-      reloadThread();
-      reload();
-    } catch (error) {
-      toast.error(error);
-    } finally {
-      setSending(false);
-    }
+    const ext = blob.type.includes('mp4') ? 'm4a' : blob.type.includes('ogg') ? 'ogg' : 'webm';
+    const to = target();
+    await deliver(
+      tempMessage({ body: null, media_kind: 'audio', media_status: 'enviando', media_name: 'Áudio' }),
+      async () => callApi('whatsapp/enviar', { ...to, midia: await uploadForWhatsApp(blob, `audio-${Date.now()}.${ext}`), voz: true }),
+    );
   }
 
   async function cancelRecording() {
@@ -308,12 +341,22 @@ export function ConversationsPage() {
     }
   }
 
+  function dismissFailed(m) {
+    setPending((p) => p.filter((x) => x.id !== m.id));
+    if (m.body && !m.media_kind) setText(m.body);
+  }
+
   const preview = (c) => {
     const label = c.last_media_kind ? MEDIA_LABEL[c.last_media_kind] : null;
-    const textPart = c.last_body ?? (label ? '' : '(mensagem)');
+    const textPart = c.last_body ?? (label ? '' : 'Mensagem');
     return [label, textPart].filter(Boolean).join(' ');
   };
-  const canSend = (text.trim() || files.length > 0) && !sending;
+  const canSend = Boolean(text.trim() || files.length > 0);
+  const items = groupMessages(shownMessages, {
+    senderOf: (m) => (m.from_me ? `eu:${m.sent_by ?? ''}` : 'paciente'),
+    timeOf: (m) => m.sent_at,
+    isMine: (m) => m.from_me,
+  });
 
   return (
     <div className="page">
@@ -323,7 +366,6 @@ export function ConversationsPage() {
           <div className="sub">Conversas com pacientes pelo número da clínica</div>
         </div>
         <div className="topbar-right">
-          <div className="search"><Search /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Buscar conversa" /></div>
           {connection?.configurado && (
             <button type="button" className={`btn wa-conn ${connected ? 'on' : 'off'}`} onClick={() => setShowConnection(true)} title="Conexão do WhatsApp">
               <span className="dot" /> {connected ? 'Conectado' : 'Desconectado'}
@@ -344,28 +386,28 @@ export function ConversationsPage() {
         </Modal>
       )}
       {picking && (
-        <div className="card card-pad" style={{ marginBottom: 12 }}>
-          <div className="row" style={{ marginBottom: 8 }}>
-            <div className="section-title grow" style={{ margin: 0 }}>Nova conversa com paciente</div>
-            <button type="button" className="icon-btn" onClick={() => setPicking(false)} aria-label="Fechar"><X /></button>
-          </div>
+        <Modal title="Nova conversa" onClose={() => setPicking(false)}>
+          <div className="small muted" style={{ marginBottom: 10 }}>Escolha o paciente. A conversa usa o celular do cadastro.</div>
           <PatientPicker value={null} onChange={startWith} autoFocus />
-        </div>
+        </Modal>
       )}
       <div className="chat-wrap">
         <div className="card chat-list">
+          <div className="chat-list-head">
+            <div className="search"><Search /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Buscar por nome ou telefone" /></div>
+          </div>
           <div className="chat-items">
-            {shown.map((c) => {
+            {listed.map((c) => {
               const unread = Number(c.unread_count);
               return (
                 <div key={c.remote_jid} className={`chat-item ${!draft && c.remote_jid === jid ? 'active' : ''} ${unread ? 'has-unread' : ''}`} onClick={() => open(c)}>
                   <Avatar name={name(c)} />
                   <div className="grow" style={{ minWidth: 0 }}>
-                    <div className="row"><span className="nm grow">{name(c)}</span><span className="small muted">{localDay(c.last_at) === localDay() ? localTime(c.last_at) : formatDay(localDay(c.last_at))}</span></div>
+                    <div className="row"><span className="nm grow">{name(c)}</span><span className="when">{listTime(c.last_at)}</span></div>
                     <div className="row">
                       <span className="snip grow">
                         {c.last_from_me && <StatusIcon status={c.last_status} />}
-                        {preview(c)}
+                        <span>{preview(c)}</span>
                       </span>
                       {unread > 0 && <span className="unread">{unread > 99 ? '99+' : unread}</span>}
                     </div>
@@ -374,8 +416,9 @@ export function ConversationsPage() {
               );
             })}
             {conversations.length === 0 && (
-              <Empty>Nenhuma conversa ainda. Elas aparecem aqui quando a Evolution API estiver conectada.</Empty>
+              <Empty icon={MessageCircle}>Nenhuma conversa ainda. As mensagens do WhatsApp da clínica aparecem aqui.</Empty>
             )}
+            {conversations.length > 0 && listed.length === 0 && <Empty icon={Search}>Nenhuma conversa encontrada.</Empty>}
           </div>
         </div>
         <div
@@ -388,30 +431,32 @@ export function ConversationsPage() {
             <>
               <div className="chat-head">
                 <Avatar name={name(current)} />
-                <div className="grow">
-                  <h3 style={{ fontSize: 15 }}>{name(current)}</h3>
-                  <div className="small muted mono">{current.phone_digits}</div>
+                <div className="grow" style={{ minWidth: 0 }}>
+                  <h3>{name(current)}</h3>
+                  <div className="small muted tnum">{formatPhone(current.phone_digits)}{current.patient_name && current.push_name && current.push_name !== current.patient_name ? ` · no WhatsApp: ${current.push_name}` : ''}</div>
                 </div>
                 {current.patient_id && <Link className="btn btn-sm" to={`/prontuario/${current.patient_id}`}><FileText /> Prontuário</Link>}
               </div>
-              <div className="thread" ref={threadRef}>
-                {draft && <Empty>Nenhuma mensagem com este paciente ainda.</Empty>}
-                {!draft && messages.map((m) => {
-                  const d = localDay(m.sent_at);
-                  const sep = d !== lastDay ? <div key={`d${m.id}`} className="day-sep">{d === localDay() ? 'Hoje' : formatDay(d)}</div> : null;
-                  lastDay = d;
-                  return [
-                    sep,
-                    <div key={m.id} className={`msg ${m.from_me ? 'out' : 'in'} ${m.media_kind ? 'has-media' : ''}`}>
-                      {m.media_kind && <MediaContent message={m} url={urls[m.media_path]} onRetry={() => retryMedia(m.id)} />}
-                      {m.body ? <div className="msg-text">{m.body}</div> : !m.media_kind && <i>(mensagem não suportada)</i>}
-                      <span className="meta">
-                        {m.sender?.full_name ? `${m.sender.full_name} · ` : ''}{localTime(m.sent_at)}
-                        {m.from_me && <StatusIcon status={m.status} />}
-                      </span>
-                    </div>,
-                  ];
-                })}
+              <div className="thread" ref={thread.ref} onScroll={thread.onScroll}>
+                {shownMessages.length === 0 && <Empty icon={MessageCircle}>Nenhuma mensagem ainda. Escreva abaixo para começar.</Empty>}
+                {items.map((item) => (item.type === 'day' ? (
+                  <div key={item.key} className="day-sep">{item.label}</div>
+                ) : (
+                  <div key={item.key} className={`msg-group ${item.mine ? 'out' : 'in'}`}>
+                    {item.mine && item.messages[0].sender?.full_name && <span className="who">{item.messages[0].sender.full_name}</span>}
+                    {item.messages.map((m) => (
+                      <div key={m.id} className={`msg ${m.from_me ? 'out' : 'in'} ${m.media_kind ? 'has-media' : ''} ${m.pending && !m.failed ? 'pending' : ''} ${m.failed ? 'failed' : ''}`}
+                        onClick={m.failed ? () => dismissFailed(m) : undefined} title={m.failed ? 'Não enviada — clique para remover' : undefined}>
+                        {m.media_kind && <MediaContent message={m} url={urls[m.media_path]} onRetry={() => retryMedia(m.id)} />}
+                        {m.body ? <div className="msg-text">{m.body}</div> : !m.media_kind && <i>Mensagem não suportada</i>}
+                        <span className="meta">
+                          {m.failed ? 'Não enviada' : localTime(m.sent_at)}
+                          {m.from_me && !m.failed && <StatusIcon status={m.status} />}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )))}
               </div>
               {dragging && <div className="drop-hint">Solte para anexar</div>}
               {files.length > 0 && (
@@ -424,13 +469,13 @@ export function ConversationsPage() {
                   ))}
                 </div>
               )}
-              <div className="chat-compose wa-compose">
+              <div className="chat-compose">
                 <input ref={fileInput} type="file" multiple hidden onChange={(e) => { addFiles(e.target.files); e.target.value = ''; }} />
                 {recorder.recording ? (
                   <>
                     <button type="button" className="icon-btn" onClick={cancelRecording} aria-label="Descartar áudio" title="Descartar"><Trash2 /></button>
                     <div className="wa-recording grow"><span className="rec-dot" /> Gravando {Math.floor(recorder.seconds / 60)}:{String(recorder.seconds % 60).padStart(2, '0')}</div>
-                    <button type="button" className="btn btn-primary" onClick={toggleRecording} aria-label="Enviar áudio"><Square /> Enviar</button>
+                    <button type="button" className="btn btn-primary" style={{ width: 'auto', padding: '0 14px' }} onClick={toggleRecording} aria-label="Enviar áudio"><Send /> Enviar</button>
                   </>
                 ) : (
                   <>
@@ -446,16 +491,16 @@ export function ConversationsPage() {
                       placeholder={files.length ? 'Legenda (opcional)' : 'Mensagem'}
                       aria-label="Mensagem de WhatsApp"
                     />
-                    {canSend || files.length ? (
-                      <button type="button" className="btn btn-primary" onClick={send} disabled={!canSend} aria-label="Enviar"><Send /></button>
+                    {canSend ? (
+                      <button type="button" className="btn btn-primary" onClick={send} aria-label="Enviar"><Send /></button>
                     ) : (
-                      <button type="button" className="btn btn-primary" onClick={toggleRecording} disabled={sending} aria-label="Gravar áudio" title="Gravar áudio"><Mic /></button>
+                      <button type="button" className="btn btn-primary" onClick={toggleRecording} aria-label="Gravar áudio" title="Gravar áudio"><Mic /></button>
                     )}
                   </>
                 )}
               </div>
             </>
-          ) : <Empty>Selecione uma conversa.</Empty>}
+          ) : <Empty icon={MessageCircle}>Selecione uma conversa.</Empty>}
         </div>
       </div>
     </div>

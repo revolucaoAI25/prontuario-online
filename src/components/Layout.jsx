@@ -88,19 +88,22 @@ export function Layout() {
   return (
     <div className="app">
       <aside className="rail">
-        <div className="logo" title="Clínica Rezeck">CR</div>
-        {NAV.filter((item) => !item.admin || isAdmin).map(({ to, label, icon: Icon, badge }) => (
-          <NavLink key={to} to={to} className={({ isActive }) => `rail-btn ${isActive ? 'active' : ''}`}>
-            <Icon />
-            <span className="label">{label}</span>
-            {badge && unread[badge] > 0 && <span className="badge">{unread[badge] > 99 ? '99+' : unread[badge]}</span>}
-          </NavLink>
-        ))}
-        <div className="rail-spacer" />
+        <NavLink to="/agenda" className="logo" title="Everson Rezeck · Medicina Estética">
+          <img src="/brand/logo-mark.png" alt="Everson Rezeck" />
+        </NavLink>
+        <nav className="rail-nav">
+          {NAV.filter((item) => !item.admin || isAdmin).map(({ to, label, icon: Icon, badge }) => (
+            <NavLink key={to} to={to} className={({ isActive }) => `rail-btn ${isActive ? 'active' : ''}`}>
+              <Icon />
+              <span className="label">{label}</span>
+              {badge && unread[badge] > 0 && <span className="badge">{unread[badge] > 99 ? '99+' : unread[badge]}</span>}
+            </NavLink>
+          ))}
+        </nav>
         <div className="rail-user">
-          <Avatar name={staff?.full_name} />
-          <div className="name">{staff?.full_name?.split(' ').slice(0, 2).join(' ')}</div>
-          <button type="button" className="rail-btn" style={{ minHeight: 40 }} onClick={signOut} title="Sair">
+          <Avatar name={staff?.full_name} size="sm" />
+          <div className="name">{staff?.full_name?.replace(/^(Dra?\.?)\s+/i, '').split(' ')[0]}</div>
+          <button type="button" className="rail-btn" onClick={signOut} title="Sair">
             <LogOut />
             <span className="label">Sair</span>
           </button>

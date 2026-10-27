@@ -18,6 +18,9 @@ Guarde cada chave num gerenciador de senhas à medida que for criando.
    - É um arquivo só com todas as migrações e os dados iniciais (agendas, procedimentos, atalhos).
    - Se der erro no meio, pode rodar de novo: ele limpa a tentativa anterior antes de começar.
    - Depois que houver pacientes no banco ele se recusa a rodar, para nunca apagar dados reais.
+   - **Atualizações:** quando o sistema ganhar uma migração nova (um arquivo novo em
+     `supabase/migrations`), rode **só esse arquivo** no SQL Editor. Ex.: quem já tinha rodado o
+     `setup.sql` antes de 27/10 roda apenas `…009_hide_superadmin.sql`.
 3. **Bloquear cadastro aberto.** **Authentication → Sign In / Providers → Email**: desligue
    **Allow new users to sign up** e salve. (Os logins são criados pelo administrador no sistema.)
 4. **Anotar as chaves** (**Project Settings → API Keys** e botão **Connect** no topo):

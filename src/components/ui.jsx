@@ -4,7 +4,7 @@ import { initials } from '../lib/format.js';
 import { statusLabel } from '../lib/status.js';
 
 export function Avatar({ name, size }) {
-  return <span className={`avatar ${size === 'lg' ? 'lg' : ''}`}>{initials(name)}</span>;
+  return <span className={`avatar ${size ?? ''}`}>{initials(name)}</span>;
 }
 
 export function StatusPill({ status }) {
@@ -47,6 +47,6 @@ export function Field({ label, children, full, hint }) {
   );
 }
 
-export function Empty({ children }) {
-  return <div className="empty">{children}</div>;
+export function Empty({ children, icon: Icon }) {
+  return <div className="empty">{Icon && <Icon />}<div>{children}</div></div>;
 }

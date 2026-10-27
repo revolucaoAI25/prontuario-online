@@ -29,7 +29,7 @@ async function evo(path, { method = 'GET', body, timeout = 15_000 } = {}) {
       signal: AbortSignal.timeout(timeout),
     });
   } catch (error) {
-    throw new ApiError(502, 'evolution_indisponivel', `Não foi possível falar com o servidor da Evolution API (${error.message}).`);
+    throw new ApiError(502, 'evolution_indisponivel', 'Não foi possível falar com o servidor do WhatsApp. Tente de novo em instantes.');
   }
   const json = await res.json().catch(() => ({}));
   return { status: res.status, json };
@@ -38,9 +38,9 @@ async function evo(path, { method = 'GET', body, timeout = 15_000 } = {}) {
 function fail(status, json) {
   const detail = json?.response?.message ?? json?.message ?? json?.error;
   if (status === 401 || status === 403) {
-    throw new ApiError(502, 'evolution_chave_invalida', 'A Evolution API recusou a chave (EVOLUTION_API_KEY).');
+    throw new ApiError(502, 'evolution_chave_invalida', 'O servidor do WhatsApp recusou a conexão. Fale com o suporte técnico.');
   }
-  throw new ApiError(502, 'evolution_erro', `Evolution API respondeu ${status}${detail ? `: ${[].concat(detail).join(' ')}` : ''}.`);
+  throw new ApiError(502, 'evolution_erro', `O servidor do WhatsApp respondeu com erro (${status}${detail ? `: ${[].concat(detail).join(' ')}` : ''}).`);
 }
 
 function publicUrl(req) {
@@ -52,7 +52,7 @@ function publicUrl(req) {
 
 function webhookUrl(req) {
   const secret = process.env.EVOLUTION_WEBHOOK_SECRET;
-  if (!secret) throw new ApiError(500, 'configuracao_incompleta', 'Defina EVOLUTION_WEBHOOK_SECRET nas variáveis da Vercel.');
+  if (!secret) throw new ApiError(500, 'configuracao_incompleta', 'O WhatsApp ainda não foi configurado. Fale com o suporte técnico.');
   return `${publicUrl(req)}/api/webhooks/evolution?secret=${encodeURIComponent(secret)}`;
 }
 
@@ -76,7 +76,7 @@ export async function whatsappStatus() {
 export async function whatsappConnect(_body, req) {
   const { url, key, instance } = config();
   if (!url || !key) {
-    throw new ApiError(400, 'configuracao_incompleta', 'Defina EVOLUTION_API_URL e EVOLUTION_API_KEY nas variáveis da Vercel.');
+    throw new ApiError(400, 'configuracao_incompleta', 'O WhatsApp ainda não foi configurado. Fale com o suporte técnico.');
   }
   const hook = webhookUrl(req);
   const webhook = { enabled: true, url: hook, byEvents: false, base64: false, events: WEBHOOK_EVENTS };

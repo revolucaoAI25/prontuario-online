@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { CircleDollarSign, FileText, MessageCircle, X, Ban } from 'lucide-react';
 import { supabase } from '../../lib/supabase.js';
 import { useToast } from '../../context/ToastContext.jsx';
@@ -175,7 +175,7 @@ export function AppointmentDrawer({ appointment, agendas, onClose, onChanged }) 
           <button type="button" className={`btn ${showMoney ? 'btn-primary' : ''}`} onClick={() => setShowMoney((v) => !v)} title="Financeiro" aria-label="Financeiro">
             <CircleDollarSign />
           </button>
-          {wa && <a className="btn" href={wa} target="_blank" rel="noreferrer" title="Abrir no WhatsApp"><MessageCircle /></a>}
+          {wa && <Link className="btn" to={`/conversas?paciente=${patient.id}`} title="Conversa no WhatsApp"><MessageCircle /></Link>}
           <span className="grow" />
           {appointment.status !== 'cancelado' && appointment.status !== 'chegou' && (
             <button type="button" className="btn btn-danger" onClick={() => setCancelling(true)}><Ban /> Cancelar</button>

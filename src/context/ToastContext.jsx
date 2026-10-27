@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useState } from 'react';
+import { createContext, useCallback, useContext, useMemo, useState } from 'react';
 import { errorMessage } from '../lib/format.js';
 
 const ToastContext = createContext(null);
@@ -15,10 +15,10 @@ export function ToastProvider({ children }) {
     setTimeout(() => dismiss(id), action ? 7000 : duration);
   }, [dismiss]);
 
-  const api = {
+  const api = useMemo(() => ({
     info: (message, options) => show(message, options),
     error: (error) => show(typeof error === 'string' ? error : errorMessage(error), { kind: 'error', duration: 6000 }),
-  };
+  }), [show]);
 
   return (
     <ToastContext.Provider value={api}>

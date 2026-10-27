@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { Link, useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, CalendarPlus, CircleDollarSign, Paperclip, Pencil, Trash2, UserPen, MessageCircle } from 'lucide-react';
 import { supabase, must } from '../lib/supabase.js';
 import { useLoad } from '../lib/hooks.js';
@@ -220,7 +220,7 @@ export function RecordPage() {
           {patient.notes && <div className="small" style={{ marginTop: 4 }}>{patient.notes}</div>}
         </div>
         <div className="row-wrap">
-          {wa && <a className="btn" href={wa} target="_blank" rel="noreferrer"><MessageCircle /> WhatsApp</a>}
+          {wa && <Link className="btn" to={`/conversas?paciente=${patient.id}`}><MessageCircle /> WhatsApp</Link>}
           <button type="button" className="btn" onClick={() => setEditing(true)}><UserPen /> Cadastro</button>
           <button type="button" className="btn" onClick={() => setBooking(true)}><CalendarPlus /> Agendar</button>
           <button type="button" className="btn" onClick={() => setMoney(true)} aria-label="Financeiro" title="Financeiro"><CircleDollarSign /></button>

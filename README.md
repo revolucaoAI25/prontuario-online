@@ -115,6 +115,7 @@ Precisa de Node 20+ e Postgres 17 local (a mesma versão do Supabase) (usuário 
 npm install
 npm run db:reset                      # cria o banco "prontuario" com migrações e seed
 psql -U postgres -d prontuario -f dev/seed-users.sql   # logins de teste (senha: senha123)
+psql -U postgres -d prontuario -f dev/demo-data.sql    # opcional: pacientes e agenda fictícios
 POSTGREST_BIN=/caminho/postgrest node dev/stack.mjs    # imita o Supabase + /api
 npm run dev                           # app em http://localhost:5173 (copie as VITE_* que o stack imprime para .env.local)
 npm test                              # testes (usam o banco prontuario_test)

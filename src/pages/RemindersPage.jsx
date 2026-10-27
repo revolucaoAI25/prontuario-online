@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Plus, Cake, X, RotateCcw } from 'lucide-react';
+import { Plus, Cake, X, RotateCcw, BellRing } from 'lucide-react';
 import { supabase, must } from '../lib/supabase.js';
 import { useLoad } from '../lib/hooks.js';
 import { useToast } from '../context/ToastContext.jsx';
@@ -10,13 +10,27 @@ import { PatientPicker } from '../components/PatientPicker.jsx';
 import { loadProcedures } from '../components/ProcedurePicker.jsx';
 
 const TABS = [
-  { id: 'proximos', label: 'Próximos 30 dias', status: 'pendente' },
-  { id: 'pendentes', label: 'Todos pendentes', status: 'pendente' },
-  { id: 'enviado', label: 'Enviados', status: 'enviado' },
-  { id: 'expirado', label: 'Vencidos (não enviados)', status: 'expirado' },
-  { id: 'erro', label: 'Com erro', status: 'erro' },
-  { id: 'cancelado', label: 'Cancelados', status: 'cancelado' },
+  { id: 'proximos', label: 'Próximos 30 dias', status: 'pendente', empty: 'Nenhum retorno previsto para os próximos 30 dias. Veja todos em “Todos pendentes”.' },
+  { id: 'pendentes', label: 'Todos pendentes', status: 'pendente', empty: 'Nenhum lembrete pendente. Eles são criados quando o paciente chega para um procedimento.' },
+  { id: 'enviado', label: 'Enviados', status: 'enviado', empty: 'Nenhum lembrete enviado ainda.' },
+  { id: 'expirado', label: 'Vencidos (não enviados)', status: 'expirado', empty: 'Nenhum lembrete vencido.' },
+  { id: 'erro', label: 'Com erro', status: 'erro', empty: 'Nenhum envio com erro.' },
+  { id: 'cancelado', label: 'Cancelados', status: 'cancelado', empty: 'Nenhum lembrete cancelado.' },
 ];
+
+async function countReminders() {
+  const head = (build) => build(supabase.from('reminders').select('id', { count: 'exact', head: true })).then((r) => r.count ?? 0);
+  const today = localDay();
+  const [proximos, pendentes, enviado, expirado, erro, cancelado] = await Promise.all([
+    head((q) => q.eq('status', 'pendente').gte('due_on', addDays(today, -30)).lte('due_on', addDays(today, 30))),
+    head((q) => q.eq('status', 'pendente')),
+    head((q) => q.eq('status', 'enviado')),
+    head((q) => q.eq('status', 'expirado')),
+    head((q) => q.eq('status', 'erro')),
+    head((q) => q.eq('status', 'cancelado')),
+  ]);
+  return { proximos, pendentes, enviado, expirado, erro, cancelado };
+}
 
 function NewReminder({ onClose, onSaved }) {
   const toast = useToast();
@@ -66,6 +80,7 @@ export function RemindersPage() {
     if (tab === 'proximos') q = q.gte('due_on', addDays(localDay(), -30)).lte('due_on', addDays(localDay(), 30));
     return must(q);
   }, [tab]);
+  const { data: counts = {}, reload: reloadCounts } = useLoad(countReminders, []);
   const { data: birthdays = [] } = useLoad(() => must(supabase.rpc('birthdays_on')), []);
   const { data: procedures = [] } = useLoad(() => loadProcedures(), []);
 
@@ -73,6 +88,7 @@ export function RemindersPage() {
     const { error } = await supabase.from('reminders').update(changes).eq('id', id);
     if (error) return toast.error(/one_pending/.test(error.message) ? 'Já existe outro lembrete pendente desse procedimento.' : error);
     reload();
+    reloadCounts();
   }
 
   const today = localDay();
@@ -103,7 +119,11 @@ export function RemindersPage() {
 
         <div className="card">
           <div className="tabs" style={{ padding: '0 10px', marginBottom: 0 }}>
-            {TABS.map((t) => <button key={t.id} type="button" className={tab === t.id ? 'active' : ''} onClick={() => setTab(t.id)}>{t.label}</button>)}
+            {TABS.map((t) => (
+              <button key={t.id} type="button" className={tab === t.id ? 'active' : ''} onClick={() => setTab(t.id)}>
+                {t.label}{counts[t.id] ? <span className="tab-count">{counts[t.id]}</span> : null}
+              </button>
+            ))}
           </div>
           <table className="table">
             <thead><tr><th>Paciente</th><th>Procedimento</th><th>Último atendimento</th><th>{status === 'pendente' ? 'Enviar em' : 'Data'}</th><th style={{ width: 160 }} /></tr></thead>
@@ -137,7 +157,7 @@ export function RemindersPage() {
                   </td>
                   <td>
                     {status === 'pendente' && (
-                      <button type="button" className="btn btn-sm btn-danger" onClick={() => update(r.id, { status: 'cancelado', closed_reason: 'manual' })}><X /> Não enviar</button>
+                      <button type="button" className="btn btn-sm btn-ghost" style={{ color: 'var(--danger)' }} onClick={() => update(r.id, { status: 'cancelado', closed_reason: 'manual' })}><X /> Não enviar</button>
                     )}
                     {['expirado', 'cancelado', 'erro'].includes(status) && (
                       <button type="button" className="btn btn-sm" onClick={() => update(r.id, { status: 'pendente', closed_reason: null, due_on: today < r.due_on ? r.due_on : today, attempts: 0, next_attempt_at: null, last_error: null, manual_due: true })}>
@@ -149,10 +169,10 @@ export function RemindersPage() {
               ))}
             </tbody>
           </table>
-          {reminders.length === 0 && <Empty>Nada por aqui.</Empty>}
+          {reminders.length === 0 && <Empty icon={BellRing}>{TABS.find((t) => t.id === tab).empty}</Empty>}
         </div>
       </div>
-      {creating && <NewReminder onClose={() => setCreating(false)} onSaved={() => { setCreating(false); reload(); }} />}
+      {creating && <NewReminder onClose={() => setCreating(false)} onSaved={() => { setCreating(false); reload(); reloadCounts(); }} />}
     </div>
   );
 }

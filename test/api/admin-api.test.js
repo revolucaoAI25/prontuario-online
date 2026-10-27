@@ -117,7 +117,9 @@ test('only a logged-in admin can manage users', async () => {
   assert.equal((await call('usuarios', {}, await login('rec@t.dev'))).status, 403);
   const { status, body } = await call('usuarios', {}, await login('admin@t.dev'));
   assert.equal(status, 200);
-  assert.deepEqual(body.usuarios.map((u) => [u.full_name, u.email]).sort(), [['Admin', 'admin@t.dev'], ['Recepção', 'rec@t.dev'], ['Suporte', 'suporte@t.dev']]);
+  assert.deepEqual(body.usuarios.map((u) => [u.full_name, u.email]).sort(), [['Admin', 'admin@t.dev'], ['Recepção', 'rec@t.dev']], 'the support login is hidden from the clinic');
+  const asSupport = await call('usuarios', {}, await login('suporte@t.dev'));
+  assert.ok(asSupport.body.usuarios.some((u) => u.full_name === 'Suporte'));
 });
 
 test('admin creates a login that works, and can reset its password', async () => {
@@ -149,8 +151,8 @@ test('admin cannot remove their own admin access; can deactivate others', async 
 test('the clinic admin cannot edit the support login, create a super admin, or open the WhatsApp panel', async () => {
   const admin = await login('admin@t.dev');
   const support = '00000000-0000-0000-0000-0000000000a3';
-  assert.equal((await call('atualizar_usuario', { id: support, papel: 'secretaria' }, admin)).status, 403);
-  assert.equal((await call('redefinir_senha', { id: support, senha: 'trocada123' }, admin)).status, 403);
+  assert.equal((await call('atualizar_usuario', { id: support, papel: 'secretaria' }, admin)).status, 404);
+  assert.equal((await call('redefinir_senha', { id: support, senha: 'trocada123' }, admin)).status, 404);
   assert.equal((await call('criar_usuario', { nome: 'X', email: 'x@t.dev', senha: 'senhaforte1', papel: 'admin', super_admin: true }, admin)).status, 403);
 
   const superToken = await login('suporte@t.dev');

@@ -18,15 +18,18 @@ export async function loadAgendas() {
   );
 }
 
-export async function loadDay(day) {
-  const from = zonedToUtc(day, '00:00').toISOString();
-  const to = zonedToUtc(addDays(day, 1), '00:00').toISOString();
+// Bookings and blocks from `fromDay` up to (not including) `toDay`, clinic time.
+export async function loadRange(fromDay, toDay) {
+  const from = zonedToUtc(fromDay, '00:00').toISOString();
+  const to = zonedToUtc(toDay, '00:00').toISOString();
   const [appointments, blocks] = await Promise.all([
     must(supabase.from('appointments').select(APPOINTMENT_SELECT).gte('starts_at', from).lt('starts_at', to).order('starts_at')),
     must(supabase.from('agenda_blocks').select('*').lt('starts_at', to).gt('ends_at', from)),
   ]);
   return { appointments, blocks };
 }
+
+export const loadDay = (day) => loadRange(day, addDays(day, 1));
 
 export const defaultType = (agenda) =>
   agenda?.appointment_types?.find((t) => t.is_default && t.active) ?? agenda?.appointment_types?.[0] ?? null;

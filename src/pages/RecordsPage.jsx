@@ -17,7 +17,7 @@ export function RecordsPage() {
     [q, inText],
   );
   const { data: recent = [] } = useLoad(
-    () => must(supabase.from('record_entries').select('id, entry_at, content, patient:patients(id, full_name)').order('created_at', { ascending: false }).limit(30)),
+    () => must(supabase.from('record_entries').select('id, entry_at, content, patient:patients(id, full_name)').order('entry_at', { ascending: false }).limit(30)),
     [],
   );
 

@@ -34,7 +34,7 @@ export function ProceduresTab() {
     <div className="card">
       <div className="banner" style={{ margin: 14 }}>
         O lembrete de retorno é enviado esse número de meses depois do último atendimento em que o paciente <b>chegou</b> com o procedimento.
-        Em branco = padrão ({defaultMonths} meses, ajustável em “Lembretes e integrações”).
+        Em branco = padrão ({defaultMonths} meses, ajustável em Ajustes → Lembretes).
       </div>
       <table className="table">
         <thead><tr><th>Procedimento</th><th style={{ width: 200 }}>Retorno (meses)</th><th style={{ width: 120 }}>Ativo</th></tr></thead>

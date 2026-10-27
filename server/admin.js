@@ -19,18 +19,20 @@ function validPassword(password) {
 // Only a super admin creates, edits or resets another super admin.
 function guardSuper(target, me) {
   if (target?.is_superadmin && !me.is_superadmin) {
-    throw new ApiError(403, 'acesso_negado', 'Este login é do suporte técnico e não pode ser alterado aqui.');
+    throw new ApiError(404, 'usuario_nao_encontrado', 'Usuário não encontrado.');
   }
 }
 
-export async function listUsers() {
+export async function listUsers(_body, _req, me) {
   const { data, error } = await adminClient().auth.admin.listUsers({ perPage: 200 });
   if (error) throw error;
   const emails = new Map(data.users.map((u) => [u.id, u.email]));
   const { rows } = await query(
     `select s.*, a.name as agenda_name from staff s left join agendas a on a.id = s.agenda_id order by s.active desc, s.full_name`,
   );
-  return { usuarios: rows.map((s) => ({ ...s, email: emails.get(s.id) ?? null })) };
+  // The support login is not shown to the clinic.
+  const visible = me?.is_superadmin ? rows : rows.filter((s) => !s.is_superadmin);
+  return { usuarios: visible.map((s) => ({ ...s, email: emails.get(s.id) ?? null })) };
 }
 
 export async function createUser(body, _req, me) {

@@ -8,7 +8,7 @@ const STATE_LABEL = {
   open: ['Conectado', 'ok'],
   connecting: ['Aguardando leitura do QR Code', 'warn'],
   close: ['Desconectado', 'danger'],
-  inexistente: ['Instância ainda não criada', 'warn'],
+  inexistente: ['Ainda não conectado', 'warn'],
 };
 
 // Connect the clinic's WhatsApp to the Evolution API from inside the app:
@@ -100,7 +100,7 @@ export function WhatsAppConnection({ onStatus, autoConnect = false }) {
       {status?.configurado && (
         <div className="stack">
           <div className="row">
-            <span>Instância <b>{status.instancia}</b></span>
+            <span className="small muted">Situação</span>
             <span className={`tag ${tone}`}>{label}</span>
             <span className="grow" />
             <button type="button" className="btn btn-sm" onClick={refreshStatus}><RefreshCw /> Atualizar</button>
@@ -112,8 +112,8 @@ export function WhatsAppConnection({ onStatus, autoConnect = false }) {
             {status.estado === 'open' && isAdmin && <button type="button" className="btn btn-danger" onClick={disconnect}><Unplug /> Desconectar</button>}
           </div>
           {qr && (
-            <div className="stack" style={{ alignItems: 'center', padding: 10 }}>
-              {qr.image ? <img src={qr.image} alt="QR Code do WhatsApp" style={{ width: 260, height: 260 }} /> : <div className="small muted">Gerando QR Code…</div>}
+            <div className="qr-box">
+              {qr.image ? <img src={qr.image} alt="QR Code do WhatsApp" /> : <div className="wa-media-loading" style={{ width: 264, height: 264 }} />}
               <div className="small" style={{ textAlign: 'center', maxWidth: 360 }}>
                 No celular da clínica: WhatsApp → <b>Aparelhos conectados</b> → <b>Conectar um aparelho</b> e aponte para o código.
                 {qr.code && <> Ou use o código de pareamento <b className="mono">{qr.code}</b>.</>}

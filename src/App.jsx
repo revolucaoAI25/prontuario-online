@@ -20,7 +20,7 @@ function AdminOnly({ children }) {
 
 export function App() {
   const { session, staff, loading } = useAuth();
-  if (loading) return <div className="empty">Carregando…</div>;
+  if (loading) return <div className="splash"><img src="/brand/logo-mark.png" alt="" /></div>;
   if (!session) return <LoginPage />;
   if (!staff || !staff.active) return <LoginPage noAccess />;
 
