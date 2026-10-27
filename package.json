@@ -1,0 +1,19 @@
+{
+  "name": "prontuario-rezeck",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "db:reset": "scripts/db-reset-local.sh",
+    "test": "node --test --test-concurrency=1 \"test/**/*.test.js\""
+  },
+  "dependencies": {
+    "pg": "^8.13.1"
+  }
+}
