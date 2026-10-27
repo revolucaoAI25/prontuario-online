@@ -200,7 +200,9 @@ export async function listAgendas() {
             coalesce((select json_agg(json_build_object('id', t.id, 'nome', t.name, 'duracao_minutos', t.duration_minutes, 'padrao', t.is_default) order by t.sort_order)
                       from appointment_types t where t.agenda_id = a.id and t.active), '[]') as tipos,
             coalesce((select json_agg(json_build_object('dia_semana', h.weekday, 'inicio', to_char(h.start_time, 'HH24:MI'), 'fim', to_char(h.end_time, 'HH24:MI')) order by h.weekday, h.start_time)
-                      from agenda_hours h where h.agenda_id = a.id), '[]') as horarios
+                      from agenda_hours h where h.agenda_id = a.id), '[]') as horarios,
+            coalesce((select json_agg(json_build_object('dia_semana', st.weekday, 'inicio', to_char(st.start_time, 'HH24:MI')) order by st.weekday, st.start_time)
+                      from agenda_slot_times st where st.agenda_id = a.id), '[]') as horarios_fixos
      from agendas a where a.active order by a.sort_order, a.name`,
   );
   const { rows: procedures } = await query(
@@ -208,7 +210,9 @@ export async function listAgendas() {
      from procedures where active order by name`,
   );
   return {
-    agendas: agendas.map((a) => ({ id: a.id, nome: a.name, tipos: a.tipos, horarios: a.horarios })),
+    agendas: agendas.map((a) => ({
+      id: a.id, nome: a.name, tipos: a.tipos, horarios: a.horarios, horarios_fixos: a.horarios_fixos,
+    })),
     dias_semana: '0 = domingo, 1 = segunda ... 6 = sábado',
     procedimentos: procedures.map((p) => ({ id: p.id, nome: p.name, retorno_meses: p.months })),
   };
@@ -248,6 +252,7 @@ export async function availability(body) {
     const result = await query(
       `select s.agenda_id, s.agenda_name, s.appointment_type_id as type_id, d::date::text as day, s.starts_at,
               to_char(s.starts_at at time zone '${TZ}', 'HH24:MI') as start_time,
+              to_char(s.ends_at at time zone '${TZ}', 'HH24:MI') as end_time,
               (extract(epoch from s.ends_at - s.starts_at) / 60)::int as duration,
               (select sort_order from agendas where id = s.agenda_id) as sort_order
        from generate_series($1::date, $2::date, interval '1 day') d
@@ -268,9 +273,14 @@ export async function availability(body) {
         tipo_id: row.type_id,
         duracao_minutos: row.duration,
         horarios: [],
+        detalhes: [],
       });
     }
-    groups.get(key).horarios.push(row.start_time);
+    const group = groups.get(key);
+    group.horarios.push(row.start_time);
+    group.detalhes.push({ inicio: row.start_time, fim: row.end_time, duracao_minutos: row.duration });
+    // Fixed-slot agendas have slots of different lengths.
+    if (group.duracao_minutos !== row.duration) group.duracao_minutos = null;
   }
   return {
     periodo: { inicio: from, fim: to },

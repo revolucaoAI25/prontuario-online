@@ -39,6 +39,17 @@ create table agenda_hours (
 
 create index agenda_hours_agenda_idx on agenda_hours (agenda_id, weekday);
 
+-- Optional fixed start times for a weekday (the clinic's "horários quebrados",
+-- e.g. 13:30, 14:00, 14:40, 15:15). When a weekday has any, availability
+-- offers exactly these; otherwise it walks the opening hours every
+-- slot_step_minutes.
+create table agenda_slot_times (
+    agenda_id uuid not null references agendas (id) on delete cascade,
+    weekday smallint not null check (weekday between 0 and 6),
+    start_time time not null,
+    primary key (agenda_id, weekday, start_time)
+);
+
 -- Closed periods: a whole day off, a holiday (agenda_id null = whole clinic),
 -- or a few hours blocked.
 create table agenda_blocks (
@@ -48,6 +59,7 @@ create table agenda_blocks (
     ends_at timestamptz not null,
     reason text,
     created_by uuid references staff (id) on delete set null,
+    legacy_id integer unique,
     created_at timestamptz not null default now(),
     check (ends_at > starts_at)
 );
@@ -93,6 +105,7 @@ create table appointments (
     created_by uuid references staff (id) on delete set null,
     updated_by uuid references staff (id) on delete set null,
     legacy_id integer unique,
+    legacy_synced_at timestamptz,
     created_at timestamptz not null default now(),
     updated_at timestamptz not null default now(),
     check (ends_at > starts_at)
@@ -148,6 +161,36 @@ language sql stable as $$
           and h.weekday = extract(dow from (p_starts_at at time zone clinic_tz()))
           and p_starts_at >= local_timestamp((p_starts_at at time zone clinic_tz())::date, h.start_time)
           and p_ends_at <= local_timestamp((p_starts_at at time zone clinic_tz())::date, h.end_time)
+    ) or exists (
+        select 1
+        from agenda_slot_times st
+        where st.agenda_id = p_agenda_id
+          and st.weekday = extract(dow from (p_starts_at at time zone clinic_tz()))
+          and st.start_time = (p_starts_at at time zone clinic_tz())::time
+    )
+$$;
+
+-- Default end of a booking. On a configured fixed start time the slot lasts
+-- until the next fixed start (13:30 → 14:00 → 14:40), capped by the type's
+-- duration; otherwise it is simply start + duration.
+create function default_end(p_agenda_id uuid, p_starts_at timestamptz, p_duration_minutes integer)
+returns timestamptz
+language sql stable as $$
+    select least(
+        p_starts_at + make_interval(mins => p_duration_minutes),
+        coalesce((
+            select local_timestamp((p_starts_at at time zone clinic_tz())::date, min(nxt.start_time))
+            from agenda_slot_times nxt
+            where nxt.agenda_id = p_agenda_id
+              and nxt.weekday = extract(dow from (p_starts_at at time zone clinic_tz()))
+              and nxt.start_time > (p_starts_at at time zone clinic_tz())::time
+              and exists (
+                  select 1 from agenda_slot_times cur
+                  where cur.agenda_id = p_agenda_id
+                    and cur.weekday = nxt.weekday
+                    and cur.start_time = (p_starts_at at time zone clinic_tz())::time
+              )
+        ), 'infinity'::timestamptz)
     )
 $$;
 
@@ -206,9 +249,14 @@ language sql stable as $$
           and (p_agenda_id is null or a.id = p_agenda_id)
           and (p_appointment_type_id is null or t.id is not null)
     ),
-    candidates as (
-        select ag.id, ag.name, ag.sort_order, ag.type_id, s.slot_start,
-               s.slot_start + make_interval(mins => ag.duration) as slot_end
+    fixed as (
+        select ag.id, ag.name, ag.sort_order, ag.type_id,
+               local_timestamp(p_date, st.start_time) as slot_start, ag.duration
+        from ag
+        join agenda_slot_times st on st.agenda_id = ag.id and st.weekday = extract(dow from p_date)
+    ),
+    walked as (
+        select ag.id, ag.name, ag.sort_order, ag.type_id, s.slot_start, ag.duration
         from ag
         join agenda_hours h on h.agenda_id = ag.id and h.weekday = extract(dow from p_date)
         cross join lateral generate_series(
@@ -216,6 +264,12 @@ language sql stable as $$
             local_timestamp(p_date, h.end_time) - make_interval(mins => ag.duration),
             make_interval(mins => ag.slot_step_minutes)
         ) as s(slot_start)
+        where not exists (select 1 from fixed f where f.id = ag.id)
+    ),
+    candidates as (
+        select c.id, c.name, c.sort_order, c.type_id, c.slot_start,
+               default_end(c.id, c.slot_start, c.duration) as slot_end
+        from (select * from fixed union all select * from walked) c
     )
     select c.id, c.name, c.type_id, c.slot_start, c.slot_end
     from candidates c
@@ -296,7 +350,7 @@ begin
         where agenda_id = p_agenda_id and is_default and active;
     end if;
 
-    v_ends_at := coalesce(p_ends_at, p_starts_at + make_interval(mins => coalesce(v_type.duration_minutes, 30)));
+    v_ends_at := coalesce(p_ends_at, default_end(p_agenda_id, p_starts_at, coalesce(v_type.duration_minutes, 30)));
     if v_ends_at <= p_starts_at then
         raise exception 'horario_invalido';
     end if;
@@ -398,14 +452,23 @@ begin
         raise exception 'agenda_nao_encontrada';
     end if;
 
-    v_ends_at := coalesce(p_new_ends_at, p_new_starts_at + (v_appointment.ends_at - v_appointment.starts_at));
-    if v_ends_at <= p_new_starts_at then
-        raise exception 'horario_invalido';
-    end if;
-
     v_type_id := v_appointment.appointment_type_id;
     if v_agenda_id <> v_appointment.agenda_id then
         select id into v_type_id from appointment_types where agenda_id = v_agenda_id and is_default and active;
+    end if;
+
+    -- Without an explicit end, take the type's length (or keep the current
+    -- one), trimmed to the slot when landing on a fixed start time.
+    v_ends_at := coalesce(p_new_ends_at, default_end(
+        v_agenda_id,
+        p_new_starts_at,
+        coalesce(
+            (select duration_minutes from appointment_types where id = v_type_id),
+            (extract(epoch from v_appointment.ends_at - v_appointment.starts_at) / 60)::integer
+        )
+    ));
+    if v_ends_at <= p_new_starts_at then
+        raise exception 'horario_invalido';
     end if;
 
     if p_enforce_rules then

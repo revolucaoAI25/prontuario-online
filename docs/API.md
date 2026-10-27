@@ -30,8 +30,12 @@ procedimentos (com o prazo de retorno em meses). Corpo vazio `{}`.
 ```json
 { "ok": true, "disponibilidade": [
   { "data": "2026-11-03", "agenda": { "id": "...", "nome": "Dr. Everson Rezeck" },
-    "tipo_id": "...", "duracao_minutos": 20, "horarios": ["08:00", "08:20", "08:40"] } ] }
+    "tipo_id": "...", "duracao_minutos": 20, "horarios": ["08:00", "08:20", "08:40"],
+    "detalhes": [{ "inicio": "08:00", "fim": "08:20", "duracao_minutos": 20 }] } ] }
 ```
+Agendas com horários fixos ("quebrados", como 13:30, 14:00, 14:40) oferecem exatamente esses
+horários, e cada um dura até o próximo (limitado pela duração do tipo). Nesse caso
+`duracao_minutos` vem `null` porque varia — use `detalhes`.
 
 ### `POST /agenda/agendamentos`
 Agendamentos de um dia (ou período de até 31 dias).

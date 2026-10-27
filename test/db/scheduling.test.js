@@ -187,6 +187,32 @@ test('rescheduling to another agenda switches to that agenda\'s default type', a
   assert.equal(type.agenda_id, estetica);
 });
 
+test('fixed start times ("horários quebrados") replace the walked slots for that weekday', async () => {
+  const simone = await agendaId(db, 'Simone Rezeck');
+  const wednesday = await futureWeekday(db, 3, 21);
+  await db.query(
+    `insert into agenda_slot_times (agenda_id, weekday, start_time)
+     values ($1, 3, '14:00'), ($1, 3, '14:40'), ($1, 3, '15:15'), ($1, 3, '18:30')`,
+    [simone],
+  );
+  const booked = await book({ agenda: simone, start: await localTs(db, wednesday, '14:40') });
+  assert.equal((booked.ends_at - booked.starts_at) / 60000, 35, 'a fixed slot lasts until the next one');
+  const { rows } = await db.query(
+    `select to_char(starts_at at time zone clinic_tz(), 'HH24:MI') as t,
+            (extract(epoch from ends_at - starts_at) / 60)::int as minutes
+     from available_slots($1::date, $2)`,
+    [wednesday, simone],
+  );
+  // 14:40 is taken; 18:30 is past the 18:00 closing but offered because it
+  // is a configured start time, and uses the full 40 min as the last slot.
+  assert.deepEqual(rows.map((r) => [r.t, r.minutes]), [['14:00', 40], ['15:15', 40], ['18:30', 40]]);
+  const late = await book({ agenda: simone, start: await localTs(db, wednesday, '18:30') });
+  assert.ok(late.id);
+  const thursday = await futureWeekday(db, 4, 21);
+  const walked = await db.query(`select count(*)::int as n from available_slots($1::date, $2)`, [thursday, simone]);
+  assert.ok(walked.rows[0].n > 4, 'other weekdays keep walking the opening hours');
+});
+
 test('two simultaneous bookings for the same slot: exactly one wins', async () => {
   const day = await futureWeekday(db, 1, 14);
   const start = await localTs(db, day, '13:00');

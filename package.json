@@ -11,9 +11,14 @@
     "build": "vite build",
     "preview": "vite preview",
     "db:reset": "scripts/db-reset-local.sh",
-    "test": "node --test --test-concurrency=1 \"test/**/*.test.js\""
+    "test": "node --test --test-concurrency=1 \"test/**/*.test.js\"",
+    "migrate:fastclinic": "node scripts/migrate-fastclinic.mjs",
+    "api": "node server/dev-server.js"
   },
   "dependencies": {
     "pg": "^8.13.1"
+  },
+  "devDependencies": {
+    "mssql": "^11.0.2"
   }
 }

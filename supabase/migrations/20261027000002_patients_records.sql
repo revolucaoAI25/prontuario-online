@@ -16,6 +16,9 @@ create table patients (
     allow_messages boolean not null default true,
     legacy_id integer unique,
     legacy_raw jsonb,
+    -- last time the FastClinic import wrote this row; a re-import skips rows
+    -- edited in the new system after that
+    legacy_synced_at timestamptz,
     created_by uuid references staff (id) on delete set null,
     created_at timestamptz not null default now(),
     updated_at timestamptz not null default now()
@@ -38,6 +41,7 @@ create table record_entries (
     author_id uuid references staff (id) on delete set null,
     appointment_id uuid,
     legacy_id integer unique,
+    legacy_synced_at timestamptz,
     created_at timestamptz not null default now(),
     updated_at timestamptz not null default now()
 );

@@ -109,6 +109,10 @@ alter table agenda_hours enable row level security;
 create policy agenda_hours_select on agenda_hours for select to authenticated using (is_staff());
 create policy agenda_hours_admin on agenda_hours for all to authenticated using (is_admin()) with check (is_admin());
 
+alter table agenda_slot_times enable row level security;
+create policy agenda_slot_times_select on agenda_slot_times for select to authenticated using (is_staff());
+create policy agenda_slot_times_admin on agenda_slot_times for all to authenticated using (is_admin()) with check (is_admin());
+
 alter table appointment_types enable row level security;
 create policy appointment_types_select on appointment_types for select to authenticated using (is_staff());
 create policy appointment_types_admin on appointment_types for all to authenticated using (is_admin()) with check (is_admin());

@@ -58,7 +58,7 @@ end;
 $$;
 
 create trigger agendas_create_channel after insert on agendas
-for each row execute function agendas_create_channel();
+for each row when (new.active) execute function agendas_create_channel();
 
 create function unread_counts() returns table (channel_id uuid, unread bigint)
 language sql stable as $$
