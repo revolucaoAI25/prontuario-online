@@ -85,15 +85,15 @@ test('a paid entry needs a payment method', async () => {
   );
 });
 
-test('internal chat: professionals see their agenda channel, reception sees all', async () => {
+test('internal chat: professionals see their agenda channel and Recepção, reception sees all', async () => {
   const names = async (user) =>
     asUser(db, user, async () => (await db.query(`select name from chat_channels order by name`)).rows.map((r) => r.name));
-  assert.deepEqual(await names(simone), ['Simone Rezeck']);
+  assert.deepEqual(await names(simone), ['Recepção', 'Simone Rezeck']);
   assert.equal((await names(secretaria)).length, 5);
 
-  const recepcao = (await one(db, `select id from chat_channels where name = 'Recepção'`)).id;
+  const otherAgenda = (await one(db, `select id from chat_channels where name = 'Estética'`)).id;
   await expectDbError(
-    asUser(db, simone, () => db.query(`insert into chat_messages (channel_id, body) values ($1, 'oi')`, [recepcao])),
+    asUser(db, simone, () => db.query(`insert into chat_messages (channel_id, body) values ($1, 'oi')`, [otherAgenda])),
     'row-level security',
   );
   const channel = (await one(db, `select id from chat_channels where name = 'Simone Rezeck'`)).id;

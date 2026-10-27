@@ -1,4 +1,6 @@
 import { useState } from 'react';
+import { Trash2 } from 'lucide-react';
+import { useAuth } from '../context/AuthContext.jsx';
 import { supabase } from '../lib/supabase.js';
 import { useToast } from '../context/ToastContext.jsx';
 import { Modal, Field } from './ui.jsx';
@@ -9,8 +11,9 @@ const EMPTY = {
 };
 
 // Create or edit a patient. Only the name is required.
-export function PatientForm({ patient, onClose, onSaved }) {
+export function PatientForm({ patient, onClose, onSaved, onDeleted }) {
   const toast = useToast();
+  const { isAdmin } = useAuth();
   const [form, setForm] = useState(() => ({ ...EMPTY, ...Object.fromEntries(Object.entries(patient ?? {}).map(([k, v]) => [k, v ?? ''])) }));
   const [saving, setSaving] = useState(false);
   const set = (key) => (e) => setForm((f) => ({ ...f, [key]: e.target.type === 'checkbox' ? e.target.checked : e.target.value }));
@@ -40,12 +43,30 @@ export function PatientForm({ patient, onClose, onSaved }) {
     onSaved(data);
   }
 
+  // Admin only. Payments keep a patient from being deleted (they are the
+  // clinic's financial history); everything else of theirs goes with them.
+  async function remove() {
+    // eslint-disable-next-line no-alert
+    if (!window.confirm(`Apagar ${patient.full_name}? O prontuário, os agendamentos e os lembretes dele também serão apagados. Isso não tem volta.`)) return;
+    const { error } = await supabase.from('patients').delete().eq('id', patient.id);
+    if (error) {
+      return toast.error(error.code === '23503'
+        ? 'Este paciente tem lançamentos no financeiro. Apague os lançamentos (botão $) antes de apagar o cadastro.'
+        : error);
+    }
+    toast.info('Paciente apagado.');
+    onDeleted?.();
+  }
+
   return (
     <Modal
       title={patient?.id ? 'Editar cadastro' : 'Novo paciente'}
       onClose={onClose}
       wide
       footer={<>
+        {patient?.id && isAdmin && onDeleted && (
+          <button type="button" className="btn btn-ghost" style={{ color: 'var(--danger)', marginRight: 'auto' }} onClick={remove}><Trash2 /> Apagar paciente</button>
+        )}
         <button type="button" className="btn" onClick={onClose}>Cancelar</button>
         <button type="button" className="btn btn-primary" disabled={saving} onClick={save}>Salvar</button>
       </>}

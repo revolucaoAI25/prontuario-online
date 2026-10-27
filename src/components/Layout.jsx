@@ -6,7 +6,7 @@ import {
 import { supabase } from '../lib/supabase.js';
 import { useAuth } from '../context/AuthContext.jsx';
 import { useInterval } from '../lib/hooks.js';
-import { playChime } from '../lib/sound.js';
+import { installSoundUnlock, notify, playChime } from '../lib/sound.js';
 import { Avatar } from './ui.jsx';
 
 const NAV = [
@@ -21,9 +21,10 @@ const NAV = [
   { to: '/configuracoes', label: 'Ajustes', icon: Settings, admin: true },
 ];
 
-// Unread internal-chat messages, with a chime when new ones arrive. Uses
-// realtime when available and polling as a fallback.
-function useUnreadChat() {
+// Unread internal-chat messages. Every new message from someone else chimes
+// (even with that group open) and, with the app in the background, shows a
+// system notification. Realtime when available, polling as a fallback.
+function useUnreadChat(staffId) {
   const [unread, setUnread] = useState(0);
   const last = useRef(null);
 
@@ -39,14 +40,20 @@ function useUnreadChat() {
     refresh();
     const channel = supabase
       .channel('chat-unread')
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'chat_messages' }, () => refresh())
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'chat_messages' }, ({ new: m }) => {
+        if (m?.author_id && m.author_id !== staffId) {
+          playChime();
+          notify('Nova mensagem da equipe', m.body, () => { window.location.assign('/comunicacao'); });
+        }
+        refresh();
+      })
       .subscribe();
     window.addEventListener('chat-read', refresh);
     return () => {
       supabase.removeChannel(channel);
       window.removeEventListener('chat-read', refresh);
     };
-  }, []);
+  }, [staffId]); // eslint-disable-line react-hooks/exhaustive-deps
   useInterval(refresh, 10000);
   return unread;
 }
@@ -69,7 +76,13 @@ function useUnreadWhatsApp() {
     refresh();
     const channel = supabase
       .channel('whatsapp-unread')
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'whatsapp_messages' }, () => refresh())
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'whatsapp_messages' }, ({ new: m }) => {
+        if (m && !m.from_me) {
+          playChime();
+          notify(`WhatsApp · ${m.push_name ?? 'paciente'}`, m.body ?? 'Nova mensagem', () => { window.location.assign('/conversas'); });
+        }
+        refresh();
+      })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'whatsapp_reads' }, () => refresh())
       .subscribe();
     window.addEventListener('whatsapp-read', refresh);
@@ -84,7 +97,8 @@ function useUnreadWhatsApp() {
 
 export function Layout() {
   const { staff, isAdmin, signOut } = useAuth();
-  const unread = { chat: useUnreadChat(), whatsapp: useUnreadWhatsApp() };
+  const unread = { chat: useUnreadChat(staff?.id), whatsapp: useUnreadWhatsApp() };
+  useEffect(() => { installSoundUnlock(); }, []);
   return (
     <div className="app">
       <aside className="rail">

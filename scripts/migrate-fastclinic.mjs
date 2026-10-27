@@ -457,6 +457,58 @@ async function importAppointments(ms, pgc, agendaIds) {
   return { source: recordset.length, appointments: appointments.length, ...counts, cancelados: removed.rows.length, blocks: blocks.length, unknownAgenda };
 }
 
+// FastClinic's PRODUTOS_ESTOQUE is what each visit was billed (Limpeza R$ 260,
+// Consulta R$ 500…), so it becomes the patient's payment history. Rows with
+// no visit (2013–2015 counter sales) have no patient and stay out.
+async function importSales(ms, pgc) {
+  const { recordset } = await ms.query(`
+    select e.SEQ, a.SEQCLIENTE as patient, e.SEQPROCEDIMENTO as visit, rtrim(p.DESCRICAO) as product,
+           cast(e.DATA as date) as day, cast(e.preco * abs(e.QTDE) as numeric(12, 2)) as amount
+    from PRODUTOS_ESTOQUE e
+    join ATENDIMENTOS a on a.SEQ = e.SEQPROCEDIMENTO
+    left join PRODUTOS_CLINICA p on p.SEQ = e.SEQPRODUTO
+    where e.situacao = 'S' and e.preco * abs(e.QTDE) > 0 and a.SEQCLIENTE is not null`);
+  const rows = recordset.map((r) => ({
+    legacy_id: r.SEQ,
+    patient_legacy_id: r.patient,
+    visit_legacy_id: r.visit,
+    day: isoDay(r.day),
+    amount: Number(r.amount),
+    description: clean(r.product) ?? 'FastClinic',
+  }));
+  const counts = { novos: 0, alterados: 0 };
+  await inBatches(rows, async (batch) => {
+    const { rows: written } = await pgc.query(
+      `insert into payments (legacy_id, patient_id, appointment_id, amount, method, status, occurred_on, description, legacy_synced_at)
+       select x.legacy_id, p.id, a.id, x.amount, 'outro', 'pago', x.day, x.description, now()
+       from jsonb_to_recordset($1::jsonb) as x(legacy_id int, patient_legacy_id int, visit_legacy_id int, day date, amount numeric, description text)
+       join patients p on p.legacy_id = x.patient_legacy_id
+       left join appointments a on a.legacy_id = x.visit_legacy_id
+       on conflict (legacy_id) do update set
+         patient_id = excluded.patient_id, appointment_id = excluded.appointment_id, amount = excluded.amount,
+         occurred_on = excluded.occurred_on, description = excluded.description, legacy_synced_at = now()
+       where payments.updated_at <= payments.legacy_synced_at + interval '5 seconds'
+         and (payments.amount, payments.occurred_on, payments.description, payments.appointment_id)
+             is distinct from (excluded.amount, excluded.occurred_on, excluded.description, excluded.appointment_id)
+       ${RETURNING_KIND}`,
+      [JSON.stringify(batch)],
+    );
+    tally(counts, written);
+  });
+
+  // The physical products it sold. Their balance can't be rebuilt (FastClinic
+  // recorded sales but almost no purchases), so they start at zero.
+  await pgc.query(
+    `insert into stock_products (name, unit, notes)
+     select x.name, 'un', 'Importado do FastClinic: conferir a quantidade e lançar a entrada.'
+     from jsonb_to_recordset($1::jsonb) as x(name text)
+     where not exists (select 1 from stock_products s where normalize_text(btrim(s.name)) = normalize_text(btrim(x.name)))`,
+    [JSON.stringify([{ name: 'Solução de acne' }, { name: 'Loção clareadora' }, { name: 'Sabonete' }])],
+  );
+  const total = rows.reduce((sum, r) => sum + r.amount, 0);
+  return { linhas: rows.length, total, ...counts };
+}
+
 // DATABASE_URL (direct Postgres), or SUPABASE_ACCESS_TOKEN + SUPABASE_PROJECT_REF
 // to go through the Supabase Management API over HTTPS when port 5432/6543
 // is not reachable.
@@ -490,6 +542,8 @@ export async function main({ pgc = databaseClient() } = {}) {
     console.log(`prontuários: ${rec.entries} entradas → ${rec.novos} novas, ${rec.alterados} alteradas`);
     const appt = await importAppointments(ms, pgc, agendaIds);
     console.log(`agendamentos: ${appt.appointments} no FastClinic → ${appt.novos} novos, ${appt.alterados} alterados, ${appt.cancelados} cancelados (excluídos lá); ${appt.blocks} bloqueios futuros`);
+    const sales = await importSales(ms, pgc);
+    console.log(`financeiro: ${sales.linhas} cobranças (R$ ${sales.total.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}) → ${sales.novos} novas, ${sales.alterados} alteradas`);
     console.log('Registros editados no sistema novo depois da última importação não são alterados.');
     console.log(`concluído em ${Math.round((Date.now() - started) / 1000)}s`);
   } finally {

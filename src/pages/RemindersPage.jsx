@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Plus, Cake, X, RotateCcw, BellRing } from 'lucide-react';
+import { Plus, Cake, X, RotateCcw, BellRing, Trash2, ListChecks } from 'lucide-react';
+import { useAuth } from '../context/AuthContext.jsx';
+import { ProceduresTab } from './settings/ProceduresTab.jsx';
 import { supabase, must } from '../lib/supabase.js';
 import { useLoad } from '../lib/hooks.js';
 import { useToast } from '../context/ToastContext.jsx';
@@ -20,6 +22,15 @@ const TABS = [
 
 async function countReminders() {
   const head = (build) => build(supabase.from('reminders').select('id', { count: 'exact', head: true })).then((r) => r.count ?? 0);
+  async function remove(r) {
+    // eslint-disable-next-line no-alert
+    if (!window.confirm(`Apagar o lembrete de ${r.procedure?.name ?? 'retorno'} de ${r.patient?.full_name}?`)) return;
+    const { error } = await supabase.from('reminders').delete().eq('id', r.id);
+    if (error) return toast.error(error);
+    reload();
+    reloadCounts();
+  }
+
   const today = localDay();
   const [proximos, pendentes, enviado, expirado, erro, cancelado] = await Promise.all([
     head((q) => q.eq('status', 'pendente').gte('due_on', addDays(today, -30)).lte('due_on', addDays(today, 30))),
@@ -66,6 +77,8 @@ function NewReminder({ onClose, onSaved }) {
 
 export function RemindersPage() {
   const toast = useToast();
+  const { isAdmin } = useAuth();
+  const [types, setTypes] = useState(false);
   const [tab, setTab] = useState('proximos');
   const [creating, setCreating] = useState(false);
   const status = TABS.find((t) => t.id === tab).status;
@@ -101,6 +114,7 @@ export function RemindersPage() {
           <div className="sub">Retorno por procedimento: contado a partir do último atendimento em que o paciente chegou</div>
         </div>
         <div className="topbar-right">
+          {isAdmin && <button type="button" className="btn" onClick={() => setTypes(true)}><ListChecks /> Tipos de retorno</button>}
           <button type="button" className="btn btn-primary" onClick={() => setCreating(true)}><Plus /> Novo lembrete</button>
         </div>
       </header>
@@ -156,6 +170,7 @@ export function RemindersPage() {
                     {r.last_error && <div className="small" style={{ color: 'var(--danger)' }}>{r.last_error}</div>}
                   </td>
                   <td>
+                    <div className="row" style={{ justifyContent: 'flex-end', gap: 4 }}>
                     {status === 'pendente' && (
                       <button type="button" className="btn btn-sm btn-ghost" style={{ color: 'var(--danger)' }} onClick={() => update(r.id, { status: 'cancelado', closed_reason: 'manual' })}><X /> Não enviar</button>
                     )}
@@ -164,6 +179,10 @@ export function RemindersPage() {
                         <RotateCcw /> Reativar
                       </button>
                     )}
+                    {isAdmin && (
+                      <button type="button" className="icon-btn ghost" onClick={() => remove(r)} aria-label="Apagar lembrete" title="Apagar"><Trash2 /></button>
+                    )}
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -172,6 +191,12 @@ export function RemindersPage() {
           {reminders.length === 0 && <Empty icon={BellRing}>{TABS.find((t) => t.id === tab).empty}</Empty>}
         </div>
       </div>
+      {types && (
+        <Modal title="Tipos de retorno" wide onClose={() => { setTypes(false); reload(); }}>
+          <div className="small muted" style={{ marginBottom: 12 }}>Cada procedimento é um tipo de lembrete, com o seu prazo de retorno.</div>
+          <ProceduresTab />
+        </Modal>
+      )}
       {creating && <NewReminder onClose={() => setCreating(false)} onSaved={() => { setCreating(false); reload(); reloadCounts(); }} />}
     </div>
   );

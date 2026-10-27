@@ -44,4 +44,4 @@ insert into note_shortcuts (label, insert_text, kind, sort_order) values
     ('LC2', 'Loção clareadora 2', 'produto', 6),
     ('Sol', 'Solução de acne', 'produto', 7);
 
-insert into chat_channels (name) values ('Recepção');
+insert into chat_channels (name, everyone) values ('Recepção', true);

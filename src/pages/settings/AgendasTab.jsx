@@ -34,6 +34,17 @@ function AgendaEditor({ agenda, onSaved }) {
     setFixed(Object.fromEntries(Object.entries(byDay).map(([d, list]) => [d, list.sort().join(' ')])));
   }, [agenda]);
 
+  async function remove() {
+    // eslint-disable-next-line no-alert
+    if (!window.confirm(`Apagar a agenda "${agenda.name}"?`)) return;
+    const { data, error } = await supabase.rpc('delete_agenda', { p_id: agenda.id });
+    if (error) return toast.error(error);
+    toast.info(data === 'arquivado'
+      ? `"${agenda.name}" tem atendimentos no histórico: saiu da agenda e dos ajustes, mas o histórico continua.`
+      : `Agenda "${agenda.name}" apagada.`);
+    onSaved();
+  }
+
   async function save() {
     try {
       await must(supabase.from('agendas').update({ name: info.name, color: info.color, slot_step_minutes: Number(info.slot_step_minutes) || 30 }).eq('id', agenda.id));
@@ -116,7 +127,11 @@ function AgendaEditor({ agenda, onSaved }) {
       <div className="small muted" style={{ marginBottom: 10 }}>
         Com horários fixos, a API oferece exatamente esses horários e cada um dura até o próximo. Sem eles, a grade anda pelo intervalo acima.
       </div>
-      <button type="button" className="btn btn-primary" onClick={save}>Salvar {info.name}</button>
+      <div className="row">
+        <button type="button" className="btn btn-primary" onClick={save}>Salvar {info.name}</button>
+        <span className="grow" />
+        <button type="button" className="btn btn-ghost" style={{ color: 'var(--danger)' }} onClick={remove}><Trash2 /> Apagar agenda</button>
+      </div>
     </div>
   );
 }

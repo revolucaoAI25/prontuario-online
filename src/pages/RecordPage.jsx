@@ -296,7 +296,7 @@ export function RecordPage() {
         </div>
       </div>
 
-      {editing && <PatientForm patient={patient} onClose={() => setEditing(false)} onSaved={() => { setEditing(false); patientLoad.reload(); }} />}
+      {editing && <PatientForm patient={patient} onClose={() => setEditing(false)} onSaved={() => { setEditing(false); patientLoad.reload(); }} onDeleted={() => navigate('/pacientes', { replace: true })} />}
       {money && (
         <Modal title={`Financeiro · ${patient.full_name}`} onClose={() => setMoney(false)}>
           <PaymentsPanel patientId={patient.id} />

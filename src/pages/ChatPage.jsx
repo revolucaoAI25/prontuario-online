@@ -1,11 +1,13 @@
-import { useEffect, useMemo, useState } from 'react';
-import { Hash, MessagesSquare, Search, Send } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Hash, MessagesSquare, Plus, Search, Send, Settings2, Trash2 } from 'lucide-react';
+import { ChatGroupModal } from './ChatGroupModal.jsx';
 import { supabase, must } from '../lib/supabase.js';
 import { useInterval, useLoad } from '../lib/hooks.js';
 import { useAuth } from '../context/AuthContext.jsx';
 import { useToast } from '../context/ToastContext.jsx';
 import { localTime } from '../lib/time.js';
 import { groupMessages, listTime, useStickToBottom } from '../lib/chat.js';
+import { playChime } from '../lib/sound.js';
 import { Empty } from '../components/ui.jsx';
 
 const LAST_CHANNEL = 'equipe.canal';
@@ -22,7 +24,8 @@ function readLastChannel() {
 
 // Internal team groups, one per agenda/sector plus Recepção.
 export function ChatPage() {
-  const { staff } = useAuth();
+  const { staff, isAdmin } = useAuth();
+  const [managing, setManaging] = useState(null); // null | 'new' | channel
   const toast = useToast();
   const [channelId, setChannelId] = useState(null);
   const [query, setQuery] = useState('');
@@ -69,11 +72,21 @@ export function ChatPage() {
   );
 
   const shown = useMemo(() => [...messages, ...pending.filter((p) => p.channel_id === channelId)], [messages, pending, channelId]);
+
+  // Polling fallback for the sound: a message from someone else that was not
+  // there on the previous load of the open group.
+  const seen = useRef(null);
+  useEffect(() => {
+    if (!channelId) return;
+    const ids = new Set(messages.map((m) => m.id));
+    if (seen.current?.channel === channelId && messages.some((m) => !seen.current.ids.has(m.id) && m.author_id !== staff?.id)) playChime();
+    seen.current = { channel: channelId, ids };
+  }, [messages, channelId, staff]);
   const thread = useStickToBottom(channelId, shown.length);
 
   // Mark as read whenever the open channel shows new messages.
   useEffect(() => {
-    if (!channelId || !staff) return;
+    if (!channelId || !staff || !channels.some((c) => c.id === channelId)) return;
     supabase.from('chat_reads').upsert({ channel_id: channelId, staff_id: staff.id, last_read_at: new Date().toISOString() })
       .then(() => { window.dispatchEvent(new Event('chat-read')); reloadChannels(); });
   }, [channelId, messages.length]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -106,6 +119,15 @@ export function ChatPage() {
     reloadChannels();
   }
 
+  async function removeMessage(m) {
+    // eslint-disable-next-line no-alert
+    if (!window.confirm('Apagar esta mensagem?')) return;
+    const { error } = await supabase.from('chat_messages').delete().eq('id', m.id);
+    if (error) return toast.error(error);
+    reloadMessages();
+    reloadChannels();
+  }
+
   function retry(m) {
     setPending((p) => p.filter((x) => x.id !== m.id));
     setText(m.body);
@@ -129,8 +151,9 @@ export function ChatPage() {
       </header>
       <div className="chat-wrap">
         <div className="card chat-list">
-          <div className="chat-list-head">
-            <div className="search"><Search /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Buscar grupo" /></div>
+          <div className="chat-list-head row">
+            <div className="search grow"><Search /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Buscar grupo" /></div>
+            {isAdmin && <button type="button" className="icon-btn" onClick={() => setManaging('new')} title="Novo grupo" aria-label="Novo grupo"><Plus /></button>}
           </div>
           <div className="chat-items">
             {listed.map((c) => {
@@ -158,8 +181,9 @@ export function ChatPage() {
                 <span className="channel-icon"><Hash size={16} /></span>
                 <div className="grow">
                   <h3>{current.name}</h3>
-                  <div className="small muted">Grupo da equipe</div>
+                  <div className="small muted">{current.everyone ? 'Toda a equipe' : current.agenda_id ? 'Grupo da agenda' : 'Grupo da equipe'}</div>
                 </div>
+                {isAdmin && <button type="button" className="icon-btn ghost" onClick={() => setManaging(current)} title="Editar grupo" aria-label="Editar grupo"><Settings2 /></button>}
               </div>
               <div className="thread" ref={thread.ref} onScroll={thread.onScroll}>
                 {shown.length === 0 && <Empty icon={MessagesSquare}>Nenhuma mensagem ainda. Comece a conversa.</Empty>}
@@ -172,7 +196,12 @@ export function ChatPage() {
                       <div key={m.id} className={`msg ${item.mine ? 'out' : 'in'} ${m.pending ? 'pending' : ''} ${m.failed ? 'failed' : ''}`}
                         onClick={m.failed ? () => retry(m) : undefined} title={m.failed ? 'Não enviada — clique para tentar de novo' : undefined}>
                         {m.body}
-                        <span className="meta">{m.failed ? 'Não enviada' : localTime(m.created_at)}</span>
+                        <span className="meta">
+                          {m.failed ? 'Não enviada' : localTime(m.created_at)}
+                          {item.mine && !m.pending && !m.failed && (
+                            <button type="button" className="msg-del" onClick={() => removeMessage(m)} aria-label="Apagar mensagem" title="Apagar"><Trash2 /></button>
+                          )}
+                        </span>
                       </div>
                     ))}
                   </div>
@@ -194,6 +223,14 @@ export function ChatPage() {
           ) : <Empty icon={MessagesSquare}>Nenhum grupo disponível.</Empty>}
         </div>
       </div>
+      {managing && (
+        <ChatGroupModal
+          channel={managing === 'new' ? null : managing}
+          onClose={() => setManaging(null)}
+          onSaved={(id) => { setManaging(null); reloadChannels(); open(id); }}
+          onDeleted={() => { setManaging(null); setChannelId(null); reloadChannels(); }}
+        />
+      )}
     </div>
   );
 }

@@ -11,7 +11,7 @@ import {
 } from '../../lib/time.js';
 import { TimeGrid } from './TimeGrid.jsx';
 import { MonthGrid, monthDays } from './MonthGrid.jsx';
-import { AppointmentDrawer } from './AppointmentDrawer.jsx';
+import { AppointmentSheet } from './AppointmentSheet.jsx';
 import { AppointmentModal } from './AppointmentModal.jsx';
 import { BlockModal } from './BlockModal.jsx';
 import { defaultType, loadAgendas, loadRange, openWindows, proceduresOf } from './agendaData.js';
@@ -306,7 +306,7 @@ export function AgendaPage() {
       </div>
 
       {openAppointment && (
-        <AppointmentDrawer appointment={openAppointment} agendas={agendas} onClose={() => setOpenId(null)} onChanged={reload} />
+        <AppointmentSheet appointment={openAppointment} agendas={agendas} onClose={() => setOpenId(null)} onChanged={reload} />
       )}
       {creating && (
         <AppointmentModal

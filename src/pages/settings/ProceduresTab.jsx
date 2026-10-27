@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Plus } from 'lucide-react';
+import { Plus, Trash2 } from 'lucide-react';
 import { supabase, must } from '../../lib/supabase.js';
 import { useLoad } from '../../lib/hooks.js';
 import { useToast } from '../../context/ToastContext.jsx';
@@ -8,7 +8,7 @@ import { loadProcedures } from '../../components/ProcedurePicker.jsx';
 export function ProceduresTab() {
   const toast = useToast();
   const [name, setName] = useState('');
-  const { data: procedures = [], reload } = useLoad(() => must(supabase.from('procedures').select('*').order('name')), []);
+  const { data: procedures = [], reload } = useLoad(() => must(supabase.from('procedures').select('*').eq('archived', false).order('name')), []);
   const { data: defaultMonths } = useLoad(async () => {
     const row = await must(supabase.from('settings').select('value').eq('key', 'default_reminder_months').maybeSingle());
     return row?.value ?? 6;
@@ -30,6 +30,18 @@ export function ProceduresTab() {
     reload();
   }
 
+  async function remove(p) {
+    // eslint-disable-next-line no-alert
+    if (!window.confirm(`Apagar "${p.name}"?`)) return;
+    const { data, error } = await supabase.rpc('delete_procedure', { p_id: p.id });
+    if (error) return toast.error(error);
+    toast.info(data === 'arquivado'
+      ? `"${p.name}" já foi usado em atendimentos: saiu da lista, mas continua no histórico.`
+      : `"${p.name}" apagado.`);
+    loadProcedures(true);
+    reload();
+  }
+
   return (
     <div className="card">
       <div className="banner" style={{ margin: 14 }}>
@@ -37,11 +49,20 @@ export function ProceduresTab() {
         Em branco = padrão ({defaultMonths} meses, ajustável em Ajustes → Lembretes).
       </div>
       <table className="table">
-        <thead><tr><th>Procedimento</th><th style={{ width: 200 }}>Retorno (meses)</th><th style={{ width: 120 }}>Ativo</th></tr></thead>
+        <thead><tr><th>Procedimento</th><th style={{ width: 200 }}>Retorno (meses)</th><th style={{ width: 90 }}>Ativo</th><th style={{ width: 60 }} /></tr></thead>
         <tbody>
           {procedures.map((p) => (
             <tr key={p.id} style={{ opacity: p.active ? 1 : 0.5 }}>
-              <td style={{ fontWeight: 700 }}>{p.name}</td>
+              <td>
+                <input
+                  className="input"
+                  style={{ fontWeight: 600, maxWidth: 380 }}
+                  defaultValue={p.name}
+                  onBlur={(e) => { const v = e.target.value.trim(); if (v && v !== p.name) update(p.id, { name: v }); else e.target.value = p.name; }}
+                  onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
+                  aria-label={`Nome de ${p.name}`}
+                />
+              </td>
               <td>
                 <input
                   className="input"
@@ -59,6 +80,7 @@ export function ProceduresTab() {
                 />
               </td>
               <td><input type="checkbox" checked={p.active} onChange={(e) => update(p.id, { active: e.target.checked })} aria-label={`${p.name} ativo`} /></td>
+              <td><button type="button" className="icon-btn ghost" onClick={() => remove(p)} aria-label={`Apagar ${p.name}`} title="Apagar"><Trash2 /></button></td>
             </tr>
           ))}
         </tbody>

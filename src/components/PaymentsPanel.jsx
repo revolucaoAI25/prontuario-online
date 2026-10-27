@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { Check } from 'lucide-react';
+import { Check, Pencil, Trash2, X } from 'lucide-react';
+import { useAuth } from '../context/AuthContext.jsx';
 import { supabase, must } from '../lib/supabase.js';
 import { useLoad } from '../lib/hooks.js';
 import { useToast } from '../context/ToastContext.jsx';
@@ -10,11 +11,14 @@ import { formatDay, localDay } from '../lib/time.js';
 // on screen while the patient is in the room.
 export function PaymentsPanel({ patientId, appointmentId }) {
   const toast = useToast();
+  const { isAdmin } = useAuth();
+  const [editingId, setEditingId] = useState(null);
   const { data: payments = [], reload } = useLoad(
     () => must(supabase.from('payments').select('*').eq('patient_id', patientId).order('occurred_on', { ascending: false }).limit(50)),
     [patientId],
   );
-  const [form, setForm] = useState({ amount: '', method: 'pix', installments: 1, status: 'pago', occurred_on: localDay(), description: '' });
+  const blank = { amount: '', method: 'pix', installments: 1, status: 'pago', occurred_on: localDay(), description: '' };
+  const [form, setForm] = useState(blank);
   const set = (key) => (e) => setForm((f) => ({ ...f, [key]: e.target.value }));
 
   async function add() {
@@ -22,19 +26,38 @@ export function PaymentsPanel({ patientId, appointmentId }) {
     // "1.283,50" (Brazilian) or "80.50"
     const amount = Number(raw.includes(',') ? raw.replace(/\./g, '').replace(',', '.') : raw);
     if (!(amount > 0)) return toast.error('Informe o valor.');
-    const { error } = await supabase.from('payments').insert({
-      patient_id: patientId,
-      appointment_id: appointmentId ?? null,
+    const values = {
       amount,
       method: form.status === 'pago' ? form.method : (form.method || null),
       installments: Number(form.installments) || 1,
       status: form.status,
       occurred_on: form.occurred_on,
       description: form.description.trim() || null,
-    });
+    };
+    const { error } = editingId
+      ? await supabase.from('payments').update(values).eq('id', editingId)
+      : await supabase.from('payments').insert({ ...values, patient_id: patientId, appointment_id: appointmentId ?? null });
     if (error) return toast.error(error);
-    setForm((f) => ({ ...f, amount: '', description: '' }));
-    toast.info('Lançamento registrado.');
+    setForm(blank);
+    toast.info(editingId ? 'Lançamento atualizado.' : 'Lançamento registrado.');
+    setEditingId(null);
+    reload();
+  }
+
+  function edit(p) {
+    setEditingId(p.id);
+    setForm({
+      amount: String(p.amount).replace('.', ','), method: p.method ?? 'pix', installments: p.installments, status: p.status,
+      occurred_on: p.occurred_on, description: p.description ?? '',
+    });
+  }
+
+  async function remove(p) {
+    // eslint-disable-next-line no-alert
+    if (!window.confirm(`Apagar o lançamento de ${formatMoney(p.amount)} (${formatDay(p.occurred_on)})?`)) return;
+    const { error } = await supabase.from('payments').delete().eq('id', p.id);
+    if (error) return toast.error(error);
+    if (editingId === p.id) { setEditingId(null); setForm(blank); }
     reload();
   }
 
@@ -66,7 +89,10 @@ export function PaymentsPanel({ patientId, appointmentId }) {
         <div className="field"><label>Data</label><input className="input" type="date" value={form.occurred_on} onChange={set('occurred_on')} /></div>
         <div className="field"><label>Descrição</label><input className="input" value={form.description} onChange={set('description')} placeholder="ex.: Botox" /></div>
       </div>
-      <button type="button" className="btn btn-primary" onClick={add}>Registrar lançamento</button>
+      <div className="row">
+        <button type="button" className="btn btn-primary" onClick={add}>{editingId ? 'Salvar alteração' : 'Registrar lançamento'}</button>
+        {editingId && <button type="button" className="btn" onClick={() => { setEditingId(null); setForm(blank); }}><X /> Cancelar edição</button>}
+      </div>
       <div>
         <div className="section-title" style={{ marginTop: 6 }}>Histórico</div>
         {payments.length === 0 && <div className="small muted">Nenhum lançamento.</div>}
@@ -79,6 +105,8 @@ export function PaymentsPanel({ patientId, appointmentId }) {
             {p.status === 'pendente'
               ? <button type="button" className="btn btn-sm" onClick={() => markPaid(p)}><Check /> Marcar pago</button>
               : <span className="tag ok">Pago</span>}
+            <button type="button" className="icon-btn ghost" onClick={() => edit(p)} aria-label="Editar lançamento" title="Editar"><Pencil /></button>
+            {isAdmin && <button type="button" className="icon-btn ghost" onClick={() => remove(p)} aria-label="Apagar lançamento" title="Apagar"><Trash2 /></button>}
           </div>
         ))}
       </div>

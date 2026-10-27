@@ -39,7 +39,7 @@
   --st-agendado-bg: #fff8dc; --st-agendado-bd: #f1e2a4; --st-agendado-ink: #6f5600; --st-agendado-dot: #e6c446;
   --st-confirmado-bg: #f6eee2; --st-confirmado-bd: #e4d3b8; --st-confirmado-ink: #66502f; --st-confirmado-dot: #c6a676;
   --st-chegou-bg: #e8d6c4; --st-chegou-bd: #c3a183; --st-chegou-ink: #46301c; --st-chegou-dot: #8d5d39;
-  --st-pediu_remarcar-bg: #fcebf1; --st-pediu_remarcar-bd: #f1c6d6; --st-pediu_remarcar-ink: #8f3a5a; --st-pediu_remarcar-dot: #df8fae;
+  --st-pediu_remarcar-bg: #fef4f7; --st-pediu_remarcar-bd: #f6d9e3; --st-pediu_remarcar-ink: #93506b; --st-pediu_remarcar-dot: #eaaec4;
   --st-nao_compareceu-bg: #e8f0fa; --st-nao_compareceu-bd: #c3d6ee; --st-nao_compareceu-ink: #34587d; --st-nao_compareceu-dot: #82a8d4;
   --st-cancelado-bg: #f4f3f1; --st-cancelado-bd: #e2dfda; --st-cancelado-ink: #918c85; --st-cancelado-dot: #c1bcb4;
 }
@@ -557,3 +557,23 @@ body.focus-mode .record-head { padding: 10px 16px; margin-bottom: 12px; }
 body.focus-mode .record-head .avatar.lg { width: 40px; height: 40px; font-size: 14px; }
 .record-layout.focus { grid-template-columns: minmax(0, 1fr); }
 .record-layout.focus > .stack.scroll { display: none; }
+
+/* Full-screen sheet (a booking opened from the agenda) */
+.sheet { position: fixed; inset: 0; z-index: 41; background: var(--bg); display: flex; flex-direction: column; animation: fade-in 0.16s ease; }
+.sheet-head { flex: none; display: flex; align-items: center; gap: 14px; padding: 14px 28px; background: var(--surface); border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+.sheet-head h2 { font-size: 20px; font-weight: 800; }
+.sheet-body { flex: 1; min-height: 0; overflow: auto; display: grid; grid-template-columns: minmax(0, 1fr) 380px; gap: 18px; padding: 22px 28px 28px; max-width: 1360px; width: 100%; margin: 0 auto; align-content: start; }
+.sheet-side { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.sheet-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 8px; padding-top: 16px; border-top: 1px solid var(--border); }
+.sheet-note { font-size: 13px; color: var(--ink-2); white-space: pre-wrap; overflow-wrap: anywhere; margin-top: 3px; display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
+.status-grid.wide { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+.btn-lg { height: 44px; font-size: 14px; }
+.dot-sw { width: 8px; height: 8px; border-radius: 99px; display: inline-block; }
+@media (max-width: 1000px) {
+  .sheet-body { grid-template-columns: 1fr; padding: 16px; }
+  .status-grid.wide { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+
+.msg .msg-del { display: inline-flex; border: none; background: transparent; color: inherit; padding: 0 0 0 4px; cursor: pointer; opacity: 0; transition: opacity 0.15s; }
+.msg .msg-del svg { width: 12px; height: 12px; }
+.msg:hover .msg-del { opacity: 0.8; }

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Plus, ArrowDownToLine, ArrowUpFromLine, Search } from 'lucide-react';
+import { Plus, ArrowDownToLine, ArrowUpFromLine, Search, Trash2 } from 'lucide-react';
 import { supabase, must } from '../lib/supabase.js';
 import { useLoad } from '../lib/hooks.js';
 import { useToast } from '../context/ToastContext.jsx';
@@ -24,9 +24,20 @@ function ProductModal({ product, onClose, onSaved }) {
     onSaved();
   }
 
+  async function remove() {
+    // eslint-disable-next-line no-alert
+    if (!window.confirm(`Apagar "${product.name}" e todo o histórico de entradas e saídas dele?`)) return;
+    const { error } = await supabase.from('stock_products').delete().eq('id', product.id);
+    if (error) return toast.error(error);
+    onSaved();
+  }
+
   return (
     <Modal title={product?.id ? 'Editar produto' : 'Novo produto'} onClose={onClose}
-      footer={<><button type="button" className="btn" onClick={onClose}>Cancelar</button><button type="button" className="btn btn-primary" onClick={save}>Salvar</button></>}>
+      footer={<>
+        {product?.id && <button type="button" className="btn btn-ghost" style={{ color: 'var(--danger)', marginRight: 'auto' }} onClick={remove}><Trash2 /> Apagar produto</button>}
+        <button type="button" className="btn" onClick={onClose}>Cancelar</button><button type="button" className="btn btn-primary" onClick={save}>Salvar</button>
+      </>}>
       <div className="form-grid">
         <Field label="Nome" full><input className="input" autoFocus value={form.name} onChange={set('name')} /></Field>
         <Field label="Unidade"><input className="input" value={form.unit} onChange={set('unit')} placeholder="un, ml, cx" /></Field>
@@ -60,6 +71,7 @@ function MovementModal({ product, type, onClose, onSaved }) {
 }
 
 export function StockPage() {
+  const toast = useToast();
   const [query, setQuery] = useState('');
   const [editing, setEditing] = useState(null);
   const [moving, setMoving] = useState(null);
@@ -77,6 +89,14 @@ export function StockPage() {
   const shown = products.filter((p) => !query.trim() || norm(p.name).includes(norm(query.trim())) || norm(p.location).includes(norm(query.trim())));
   const low = products.filter((p) => Number(p.quantity) <= Number(p.min_quantity) && Number(p.min_quantity) > 0).length;
 
+
+  async function removeMovement(m) {
+    // eslint-disable-next-line no-alert
+    if (!window.confirm(`Apagar esta ${m.type === 'entrada' ? 'entrada' : 'saída'} de ${qty(m.quantity)}?`)) return;
+    const { error } = await supabase.from('stock_movements').delete().eq('id', m.id);
+    if (error) return toast.error(error);
+    reload();
+  }
   return (
     <div className="page">
       <header className="topbar">
@@ -119,6 +139,8 @@ export function StockPage() {
                           <span className="mono muted">{formatDateTime(m.moved_at)}</span>
                           <span>{m.note}</span>
                           <span className="muted">{m.author?.full_name}</span>
+                          <span className="grow" />
+                          <button type="button" className="icon-btn ghost" style={{ width: 28, height: 28 }} onClick={() => removeMovement(m)} aria-label="Apagar movimentação" title="Apagar"><Trash2 /></button>
                         </div>
                       ))}
                     </td>
