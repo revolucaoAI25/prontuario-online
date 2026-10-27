@@ -533,6 +533,13 @@ export async function main({ pgc = databaseClient() } = {}) {
   await pgc.connect();
   const started = Date.now();
   try {
+    // MIGRATE_ONLY=financeiro brings in just the billed items, without
+    // re-reading patients, records and appointments.
+    if (process.env.MIGRATE_ONLY === 'financeiro') {
+      const sales = await importSales(ms, pgc);
+      console.log(`financeiro: ${sales.linhas} cobranças (R$ ${sales.total.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}) → ${sales.novos} novas, ${sales.alterados} alteradas`);
+      return;
+    }
     const agendaIds = await ensureAgendas(pgc);
     const hours = await importOpeningHours(ms, pgc, agendaIds);
     console.log(`horários das agendas: ${hours.mantidas.length ? `mantidos os já configurados (${hours.mantidas.join(', ')})` : `${hours.horarios} horários fixos importados`}`);
