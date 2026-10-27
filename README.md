@@ -29,8 +29,9 @@ O passo a passo detalhado (com onde achar cada chave) está em
 
 ### 1. Supabase
 1. Crie o projeto na região **São Paulo (sa-east-1)**.
-2. Aplique as migrações em ordem (Supabase CLI: `supabase link` e `supabase db push`, ou cole
-   cada arquivo de `supabase/migrations` no SQL Editor) e depois `supabase/seed.sql`.
+2. No SQL Editor, cole e rode `supabase/setup.sql` (todas as migrações + seed num arquivo só,
+   gerado por `node scripts/build-setup-sql.mjs`). Ou, com a Supabase CLI, `supabase db push` e
+   depois `supabase/seed.sql`.
 3. Em **Authentication → Sign In / Providers → Email**, desligue *Allow new users to sign up*
    (os logins são criados pelo administrador dentro do sistema).
 
@@ -102,7 +103,7 @@ Com `WEBHOOK_SIGNING_SECRET` definido, cada envio traz `x-clinica-assinatura: sh
 Respostas fora de 2xx são reenviadas mais tarde (até 5 tentativas).
 
 ## Desenvolvimento local
-Precisa de Node 20+ e Postgres 16 local (usuário `postgres`/`postgres`).
+Precisa de Node 20+ e Postgres 17 local (a mesma versão do Supabase) (usuário `postgres`/`postgres`).
 ```bash
 npm install
 npm run db:reset                      # cria o banco "prontuario" com migrações e seed

@@ -32,7 +32,7 @@ create function clinic_tz() returns text
 language sql immutable parallel safe as $$ select 'America/Sao_Paulo' $$;
 
 create function clinic_today() returns date
-language sql stable as $$ select (now() at time zone clinic_tz())::date $$;
+language sql stable as $$ select (now() at time zone public.clinic_tz())::date $$;
 
 create function normalize_text(t text) returns text
 language sql immutable parallel safe as $$
@@ -44,6 +44,8 @@ language sql immutable parallel safe as $$ select regexp_replace(coalesce(t, '')
 
 -- Brazilian phone key: DDD + last 8 digits. Ignores the country code and the
 -- optional 9th mobile digit, which WhatsApp JIDs and typed numbers disagree on.
+-- Used in indexes: Postgres 17 builds those with an empty search_path, so
+-- calls to our own functions must be schema-qualified.
 create function phone_key(digits text) returns text
 language sql immutable parallel safe as $$
     select case
@@ -52,9 +54,9 @@ language sql immutable parallel safe as $$
     end
     from (
         select case
-            when length(only_digits(digits)) >= 12 and left(only_digits(digits), 2) = '55'
-                then substr(only_digits(digits), 3)
-            else ltrim(only_digits(digits), '0')
+            when length(public.only_digits(digits)) >= 12 and left(public.only_digits(digits), 2) = '55'
+                then substr(public.only_digits(digits), 3)
+            else ltrim(public.only_digits(digits), '0')
         end as d
     ) s
 $$;

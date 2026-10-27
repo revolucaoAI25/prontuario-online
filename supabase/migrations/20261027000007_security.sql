@@ -195,14 +195,17 @@ begin
         insert into storage.buckets (id, name, public) values ('prontuario', 'prontuario', false)
         on conflict (id) do nothing;
 
+        execute 'drop policy if exists prontuario_staff_read on storage.objects';
         execute $p$
             create policy prontuario_staff_read on storage.objects for select to authenticated
             using (bucket_id = 'prontuario' and (select public.is_staff()))
         $p$;
+        execute 'drop policy if exists prontuario_staff_write on storage.objects';
         execute $p$
             create policy prontuario_staff_write on storage.objects for insert to authenticated
             with check (bucket_id = 'prontuario' and (select public.is_staff()))
         $p$;
+        execute 'drop policy if exists prontuario_staff_delete on storage.objects';
         execute $p$
             create policy prontuario_staff_delete on storage.objects for delete to authenticated
             using (bucket_id = 'prontuario' and (select public.is_staff()))

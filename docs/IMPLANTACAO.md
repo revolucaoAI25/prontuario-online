@@ -12,12 +12,12 @@ Guarde cada chave num gerenciador de senhas à medida que for criando.
    - Crie uma senha forte para o banco e guarde (é a `SENHA` das conexões abaixo).
    - Plano: pode começar no Free para montar e testar; antes da virada, veja a seção
      **9. Backup** (recomendação: Pro, que tem backup diário automático).
-2. **Criar as tabelas.** Menu **SQL Editor** → **New query**. Cole e rode, **um por vez e nesta
-   ordem**, o conteúdo de cada arquivo da pasta `supabase/migrations` do repositório:
-   `…001_base.sql`, `…002_patients_records.sql`, `…003_scheduling.sql`, `…004_reminders.sql`,
-   `…005_finance_stock.sql`, `…006_messaging.sql`, `…007_security.sql`.
-   Depois rode `supabase/seed.sql` (agendas, tipos, procedimentos e atalhos iniciais).
-   Cada um deve terminar com "Success. No rows returned".
+2. **Criar as tabelas.** Abra o arquivo `supabase/setup.sql` no GitHub, clique em **Raw**,
+   selecione tudo (Ctrl+A) e copie. No Supabase: **SQL Editor → New query**, cole e clique em
+   **Run**. Deve terminar com "Success. No rows returned".
+   - É um arquivo só com todas as migrações e os dados iniciais (agendas, procedimentos, atalhos).
+   - Se der erro no meio, pode rodar de novo: ele limpa a tentativa anterior antes de começar.
+   - Depois que houver pacientes no banco ele se recusa a rodar, para nunca apagar dados reais.
 3. **Bloquear cadastro aberto.** **Authentication → Sign In / Providers → Email**: desligue
    **Allow new users to sign up** e salve. (Os logins são criados pelo administrador no sistema.)
 4. **Anotar as chaves** (**Project Settings → API Keys** e botão **Connect** no topo):
