@@ -87,10 +87,10 @@ um número, com webhook próprio — não interfere no outro projeto).
 2. No celular da clínica: WhatsApp → **Aparelhos conectados → Conectar um aparelho** → leia o QR.
    O status muda para **Conectado**.
 3. Mande uma mensagem de teste para o número da clínica: ela aparece em **WhatsApp** no menu.
-4. Responda pela tela **WhatsApp** do sistema: a mensagem sai pelo número da clínica e aparece no
-   celular também, com o nome de quem enviou registrado no sistema. **Nova conversa** começa uma
-   conversa com qualquer paciente cadastrado. (Recomende à equipe responder pelo celular sempre
-   que possível; o envio pelo sistema é para quando for mais prático.)
+4. Pela tela **WhatsApp** a equipe responde, manda fotos, vídeos, documentos e áudios (botão do
+   microfone), e vê se a mensagem foi entregue e lida. Arquivos também podem ser colados (Ctrl+V)
+   ou arrastados para a conversa. **Nova conversa** começa uma conversa com qualquer paciente.
+   O menu mostra quantas mensagens ainda não foram abertas, com aviso sonoro.
 
 Observação: se o número da clínica estiver na API oficial (Cloud API), ele não aceita conexão por
 QR Code; nesse caso o espelho precisa ser feito pelo provedor oficial.

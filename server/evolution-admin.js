@@ -1,5 +1,6 @@
 import { ApiError } from './http.js';
-import { queryOne } from './db.js';
+import { query, queryOne } from './db.js';
+import { adminClient } from './supabase-admin.js';
 import { storeEvolutionEvent } from './evolution.js';
 import { whatsappNumber } from './patient-context.js';
 
@@ -7,7 +8,7 @@ import { whatsappNumber } from './patient-context.js';
 // missing, point its webhook at this app, show the QR code, report status,
 // and send text messages from the conversations screen.
 // The server URL and global key live only in server env vars.
-const WEBHOOK_EVENTS = ['MESSAGES_UPSERT', 'SEND_MESSAGE'];
+const WEBHOOK_EVENTS = ['MESSAGES_UPSERT', 'SEND_MESSAGE', 'MESSAGES_UPDATE'];
 
 function config() {
   return {
@@ -17,7 +18,7 @@ function config() {
   };
 }
 
-async function evo(path, { method = 'GET', body } = {}) {
+async function evo(path, { method = 'GET', body, timeout = 15_000 } = {}) {
   const { url, key } = config();
   let res;
   try {
@@ -25,7 +26,7 @@ async function evo(path, { method = 'GET', body } = {}) {
       method,
       headers: { apikey: key, 'content-type': 'application/json' },
       body: body ? JSON.stringify(body) : undefined,
-      signal: AbortSignal.timeout(15_000),
+      signal: AbortSignal.timeout(timeout),
     });
   } catch (error) {
     throw new ApiError(502, 'evolution_indisponivel', `Não foi possível falar com o servidor da Evolution API (${error.message}).`);
@@ -118,16 +119,25 @@ export async function whatsappDisconnect() {
 }
 
 const MAX_TEXT = 4096;
+const MAX_MEDIA_BYTES = 50 * 1024 * 1024;
+const BUCKET = 'prontuario';
+const EXT_BY_MIME = {
+  'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif',
+  'video/mp4': 'mp4', 'video/3gpp': '3gp', 'video/quicktime': 'mov',
+  'audio/ogg': 'ogg', 'audio/mpeg': 'mp3', 'audio/mp4': 'm4a', 'audio/aac': 'aac', 'audio/webm': 'webm',
+  'application/pdf': 'pdf',
+};
+// What Evolution's sendMedia calls each kind, and ours.
+const SEND_KIND = { image: 'imagem', video: 'video', audio: 'audio', document: 'documento' };
 
-// POST /api/whatsapp/enviar — any logged-in staff member. The destination is
-// the conversation's phone (or chat id), or a patient's phone.
-export async function whatsappSend(body, _req, staff) {
-  const { url, key, instance } = config();
-  if (!url || !key) throw new ApiError(400, 'configuracao_incompleta', 'O WhatsApp da clínica ainda não foi configurado.');
-  const text = String(body.texto ?? '').trim();
-  if (!text) throw new ApiError(400, 'campo_obrigatorio', 'Escreva a mensagem.', { campo: 'texto' });
-  if (text.length > MAX_TEXT) throw new ApiError(400, 'campo_invalido', `A mensagem passa de ${MAX_TEXT} caracteres.`, { campo: 'texto' });
+function sendKindFor(mime) {
+  if (/^image\/(jpeg|png|webp)$/.test(mime)) return 'image';
+  if (/^video\//.test(mime)) return 'video';
+  if (/^audio\//.test(mime)) return 'audio';
+  return 'document';
+}
 
+async function resolveNumber(body) {
   let number = whatsappNumber(body.telefone);
   if (!number && body.paciente_id) {
     const patient = await queryOne(`select phone_digits from patients where id = $1`, [String(body.paciente_id)]);
@@ -135,21 +145,113 @@ export async function whatsappSend(body, _req, staff) {
   }
   if (!number && /^[\w.-]+@(s\.whatsapp\.net|lid)$/.test(String(body.remote_jid ?? ''))) number = body.remote_jid;
   if (!number) throw new ApiError(400, 'campo_invalido', 'Telefone inválido para WhatsApp.', { campo: 'telefone' });
+  return number;
+}
+
+// A file the browser already uploaded to Storage under whatsapp/.
+function parseUpload(midia) {
+  const path = String(midia?.path ?? '');
+  if (!/^whatsapp\/[\w\-./ ()]+$/.test(path) || path.includes('..')) {
+    throw new ApiError(400, 'campo_invalido', 'Arquivo inválido.', { campo: 'midia' });
+  }
+  const mime = String(midia.mime || 'application/octet-stream').split(';')[0].toLowerCase();
+  return { path, mime, name: midia.nome ? String(midia.nome).slice(0, 200) : path.split('/').pop(), size: Number(midia.tamanho) || null };
+}
+
+// POST /api/whatsapp/enviar — any logged-in staff member. The destination is
+// the conversation's phone (or chat id), or a patient's phone. Sends text, or
+// a file (with `texto` as its caption); `voz: true` sends audio as a voice note.
+export async function whatsappSend(body, _req, staff) {
+  const { url, key, instance } = config();
+  if (!url || !key) throw new ApiError(400, 'configuracao_incompleta', 'O WhatsApp da clínica ainda não foi configurado.');
+  const text = String(body.texto ?? '').trim();
+  const file = body.midia ? parseUpload(body.midia) : null;
+  if (!text && !file) throw new ApiError(400, 'campo_obrigatorio', 'Escreva a mensagem.', { campo: 'texto' });
+  if (text.length > MAX_TEXT) throw new ApiError(400, 'campo_invalido', `A mensagem passa de ${MAX_TEXT} caracteres.`, { campo: 'texto' });
+  const number = await resolveNumber(body);
 
   const state = await connectionState();
   if (state !== 'open') throw new ApiError(409, 'whatsapp_desconectado', 'O WhatsApp da clínica está desconectado. Peça ao administrador para conectar em Ajustes.');
 
-  const { status, json } = await evo(`/message/sendText/${encodeURIComponent(instance)}`, {
+  let request;
+  let media = null;
+  if (file) {
+    const { data, error } = await adminClient().storage.from(BUCKET).createSignedUrl(file.path, 15 * 60);
+    if (error || !data?.signedUrl) throw new ApiError(400, 'arquivo_nao_encontrado', 'O arquivo enviado não foi encontrado. Tente anexar de novo.');
+    const kind = sendKindFor(file.mime);
+    media = { ...file, kind: SEND_KIND[kind] };
+    request = body.voz && kind === 'audio'
+      ? { path: 'sendWhatsAppAudio', body: { number, audio: data.signedUrl } }
+      : { path: 'sendMedia', body: { number, mediatype: kind, mimetype: file.mime, caption: text || undefined, media: data.signedUrl, fileName: file.name } };
+  } else {
+    request = { path: 'sendText', body: { number, text } };
+  }
+
+  const { status, json } = await evo(`/message/${request.path}/${encodeURIComponent(instance)}`, {
     method: 'POST',
-    body: { number, text },
+    body: request.body,
+    timeout: file ? 60_000 : 15_000,
   });
   if (status >= 400) {
     const detail = JSON.stringify(json?.response?.message ?? json?.message ?? '');
     if (/exists"?\s*:\s*false/.test(detail)) throw new ApiError(400, 'numero_sem_whatsapp', 'Esse número não tem WhatsApp.');
     fail(status, json);
   }
-  // Store it right away (with who sent it); Evolution's webhook for the same
-  // message is then a no-op.
-  await storeEvolutionEvent({ event: 'send.message', instance, data: json }, { sentBy: staff.id });
+  // Store it right away (with who sent it and our copy of the file);
+  // Evolution's webhook for the same message then only fills gaps.
+  await storeEvolutionEvent({ event: 'send.message', instance, data: json }, { sentBy: staff.id, media });
   return { enviado: true, mensagem_id: json?.key?.id ?? null };
+}
+
+function extensionFor(mime, name) {
+  const fromName = String(name ?? '').match(/\.([a-z0-9]{1,5})$/i)?.[1];
+  return (EXT_BY_MIME[mime] ?? fromName ?? 'bin').toLowerCase();
+}
+
+// Copies one received (or phone-sent) attachment from Evolution into Storage.
+export async function downloadMedia(messageId) {
+  const { url, key, instance } = config();
+  if (!url || !key) return { ok: false, motivo: 'whatsapp_nao_configurado' };
+  const row = await queryOne(`select * from whatsapp_messages where id = $1`, [messageId]);
+  if (!row || !row.media_kind) return { ok: false, motivo: 'sem_midia' };
+  if (row.media_status === 'ok') return { ok: true };
+  try {
+    const { status, json } = await evo(`/chat/getBase64FromMediaMessage/${encodeURIComponent(row.instance || instance)}`, {
+      method: 'POST',
+      body: { message: { key: { id: row.wa_message_id } }, convertToMp4: false },
+      timeout: 60_000,
+    });
+    if (status >= 400 || !json?.base64) {
+      throw new Error(`Evolution respondeu ${status}${json?.response?.message ? `: ${[].concat(json.response.message).join(' ')}` : ''}`);
+    }
+    const bytes = Buffer.from(String(json.base64).replace(/^data:[^,]+,/, ''), 'base64');
+    if (bytes.length > MAX_MEDIA_BYTES) throw new Error('arquivo maior que 50 MB');
+    const mime = String(json.mimetype || row.media_mime || 'application/octet-stream').split(';')[0];
+    const name = json.fileName || row.media_name;
+    const month = new Date(row.sent_at).toISOString().slice(0, 7);
+    const path = `whatsapp/recebidas/${month}/${row.wa_message_id.replace(/[^\w-]/g, '')}.${extensionFor(mime, name)}`;
+    const { error } = await adminClient().storage.from(BUCKET).upload(path, bytes, { contentType: mime, upsert: true });
+    if (error) throw new Error(`Storage: ${error.message}`);
+    await query(
+      `update whatsapp_messages set media_status = 'ok', media_path = $2, media_mime = $3, media_size = $4,
+              media_name = coalesce(media_name, $5), media_error = null
+       where id = $1`,
+      [row.id, path, mime, bytes.length, name ?? null],
+    );
+    return { ok: true };
+  } catch (error) {
+    await query(`update whatsapp_messages set media_status = 'erro', media_error = $2 where id = $1 and media_status <> 'ok'`, [row.id, error.message]);
+    return { ok: false, motivo: error.message };
+  }
+}
+
+export async function downloadPendingMedia(ids) {
+  for (const id of ids) await downloadMedia(id);
+}
+
+// POST /api/whatsapp/midia — try again to fetch an attachment that failed.
+export async function whatsappRetryMedia(body) {
+  const result = await downloadMedia(String(body.id ?? ''));
+  if (!result.ok) throw new ApiError(502, 'midia_indisponivel', `Não foi possível baixar o arquivo (${result.motivo}).`);
+  return {};
 }

@@ -14,7 +14,7 @@ const NAV = [
   { to: '/pacientes', label: 'Pacientes', icon: Users },
   { to: '/prontuarios', label: 'Prontuários', icon: FileText },
   { to: '/comunicacao', label: 'Equipe', icon: MessagesSquare, badge: 'chat' },
-  { to: '/conversas', label: 'WhatsApp', icon: MessageCircle },
+  { to: '/conversas', label: 'WhatsApp', icon: MessageCircle, badge: 'whatsapp' },
   { to: '/lembretes', label: 'Lembretes', icon: BellRing },
   { to: '/estoque', label: 'Estoque', icon: Package },
   { to: '/financeiro', label: 'Financeiro', icon: Wallet, admin: true },
@@ -51,9 +51,40 @@ function useUnreadChat() {
   return unread;
 }
 
+// Patient messages nobody on the team has opened yet (shared inbox), with the
+// same chime when new ones arrive.
+function useUnreadWhatsApp() {
+  const [unread, setUnread] = useState(0);
+  const last = useRef(null);
+
+  async function refresh() {
+    const { data } = await supabase.from('whatsapp_conversations').select('unread_count').gt('unread_count', 0);
+    const total = (data ?? []).reduce((sum, r) => sum + Number(r.unread_count), 0);
+    if (last.current !== null && total > last.current) playChime();
+    last.current = total;
+    setUnread(total);
+  }
+
+  useEffect(() => {
+    refresh();
+    const channel = supabase
+      .channel('whatsapp-unread')
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'whatsapp_messages' }, () => refresh())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'whatsapp_reads' }, () => refresh())
+      .subscribe();
+    window.addEventListener('whatsapp-read', refresh);
+    return () => {
+      supabase.removeChannel(channel);
+      window.removeEventListener('whatsapp-read', refresh);
+    };
+  }, []);
+  useInterval(refresh, 15000);
+  return unread;
+}
+
 export function Layout() {
   const { staff, isAdmin, signOut } = useAuth();
-  const unread = useUnreadChat();
+  const unread = { chat: useUnreadChat(), whatsapp: useUnreadWhatsApp() };
   return (
     <div className="app">
       <aside className="rail">
@@ -62,7 +93,7 @@ export function Layout() {
           <NavLink key={to} to={to} className={({ isActive }) => `rail-btn ${isActive ? 'active' : ''}`}>
             <Icon />
             <span className="label">{label}</span>
-            {badge === 'chat' && unread > 0 && <span className="badge">{unread > 99 ? '99+' : unread}</span>}
+            {badge && unread[badge] > 0 && <span className="badge">{unread[badge] > 99 ? '99+' : unread[badge]}</span>}
           </NavLink>
         ))}
         <div className="rail-spacer" />

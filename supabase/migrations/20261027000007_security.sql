@@ -147,6 +147,10 @@ create policy chat_reads_own on chat_reads for all to authenticated
 alter table whatsapp_messages enable row level security;
 create policy whatsapp_messages_select on whatsapp_messages for select to authenticated using ((select is_staff()));
 
+alter table whatsapp_reads enable row level security;
+create policy whatsapp_reads_all on whatsapp_reads for all to authenticated
+    using ((select is_staff())) with check ((select is_staff()));
+
 -- Queue/dispatch internals are for the server only.
 revoke execute on function
     claim_due_reminders(integer, integer),
@@ -183,7 +187,7 @@ $$;
 do $$
 begin
     if exists (select 1 from pg_publication where pubname = 'supabase_realtime') then
-        alter publication supabase_realtime add table appointments, chat_messages, whatsapp_messages;
+        alter publication supabase_realtime add table appointments, chat_messages, whatsapp_messages, whatsapp_reads;
     end if;
 end;
 $$;

@@ -67,7 +67,8 @@ Os demais logins (secretárias, profissionais) são criados em **Ajustes → Usu
 - **WhatsApp (Evolution API)**: com `EVOLUTION_API_URL`/`EVOLUTION_API_KEY` definidos, o botão
   **Conectar** cria a instância da clínica, configura o webhook e mostra o QR Code. Pode ser o mesmo
   servidor Evolution de outro projeto (instância separada). Na tela **WhatsApp** a equipe vê as
-  conversas e também pode enviar mensagens (texto) pelo número da clínica.
+  conversas e envia texto, fotos, vídeos, documentos e áudios pelo número da clínica. Os arquivos
+  recebidos são copiados para o Storage (pasta `whatsapp/` do bucket `prontuario`).
 
 ## Lembretes de retorno
 - Só contam atendimentos registrados no sistema novo: o histórico importado do FastClinic não gera

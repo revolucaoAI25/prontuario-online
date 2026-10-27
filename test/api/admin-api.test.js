@@ -1,5 +1,8 @@
 import { test, before, after } from 'node:test';
 import http from 'node:http';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import assert from 'node:assert/strict';
 import { resetDatabase, connect, TEST_DATABASE_URL } from '../helpers/db.js';
 import { createEmulator, SERVICE_ROLE_KEY } from '../../dev/supabase-emulator.mjs';
@@ -10,7 +13,8 @@ process.env.EVOLUTION_INSTANCE = 'clinica-teste';
 process.env.EVOLUTION_WEBHOOK_SECRET = 'segredo-webhook';
 
 // Minimal stand-in for an Evolution API v2 server.
-const evo = { instances: new Map(), calls: [] };
+const evo = { instances: new Map(), calls: [], mediaFails: true, fetched: null };
+const storageDir = mkdtempSync(path.join(tmpdir(), 'storage-'));
 const evoServer = http.createServer((req, res) => {
   const chunks = [];
   req.on('data', (c) => chunks.push(c));
@@ -30,6 +34,18 @@ const evoServer = http.createServer((req, res) => {
     if (action === 'connect') return send(200, { base64: 'data:image/png;base64,QR2', pairingCode: 'EFGH5678' });
     if (area === 'webhook' && action === 'set') { instance.webhook = body.webhook; return send(201, body); }
     if (action === 'logout') { instance.state = 'close'; return send(200, {}); }
+    if (area === 'chat' && action === 'getBase64FromMediaMessage') {
+      if (body.message.key.id === 'FAILMEDIA' && evo.mediaFails) return send(400, { response: { message: ['Message not found'] } });
+      return send(201, { mediaType: 'imageMessage', mimetype: 'image/jpeg', base64: Buffer.from(`jpeg:${body.message.key.id}`).toString('base64') });
+    }
+    if (area === 'message' && (action === 'sendMedia' || action === 'sendWhatsAppAudio')) {
+      fetch(body.media ?? body.audio).then((r) => r.text()).then((t) => { evo.fetched = t; });
+      const id = `MSG${evo.calls.length}`;
+      const message = action === 'sendMedia'
+        ? { [`${body.mediatype}Message`]: { mimetype: body.mimetype, caption: body.caption, fileName: body.fileName } }
+        : { audioMessage: { mimetype: 'audio/ogg; codecs=opus', ptt: true } };
+      return send(201, { key: { remoteJid: `${body.number}@s.whatsapp.net`, fromMe: true, id }, message, messageType: Object.keys(message)[0], messageTimestamp: 1793000000, status: 'PENDING' });
+    }
     if (area === 'message' && action === 'sendText') {
       if (body.number === '5531900000000') return send(400, { response: { message: [{ exists: false, number: body.number }] } });
       const id = `MSG${evo.calls.length}`;
@@ -60,7 +76,7 @@ before(async () => {
     insert into staff (id, full_name, role) values
       ('00000000-0000-0000-0000-0000000000a1', 'Admin', 'admin'),
       ('00000000-0000-0000-0000-0000000000a2', 'Recepção', 'secretaria');`);
-  emulator = createEmulator({ databaseUrl: TEST_DATABASE_URL, postgrestUrl: 'http://localhost:1', storageDir: '/tmp' }).listen(0);
+  emulator = createEmulator({ databaseUrl: TEST_DATABASE_URL, postgrestUrl: 'http://localhost:1', storageDir }).listen(0);
   authUrl = `http://localhost:${emulator.address().port}`;
   process.env.SUPABASE_URL = authUrl;
   process.env.SUPABASE_SERVICE_ROLE_KEY = SERVICE_ROLE_KEY;
@@ -138,7 +154,7 @@ test('WhatsApp panel: creates the instance with our webhook, shows the QR, track
   assert.equal(connect.body.codigo_pareamento, 'ABCD1234');
   const created = evo.instances.get('clinica-teste');
   assert.match(created.webhook.url, /\/api\/webhooks\/evolution\?secret=segredo-webhook$/);
-  assert.deepEqual(created.webhook.events, ['MESSAGES_UPSERT', 'SEND_MESSAGE']);
+  assert.deepEqual(created.webhook.events, ['MESSAGES_UPSERT', 'SEND_MESSAGE', 'MESSAGES_UPDATE']);
 
   const again = await call('whatsapp_conectar', {}, admin);
   assert.equal(again.body.qrcode, 'data:image/png;base64,QR2', 'existing instance: fresh QR, webhook re-applied');
@@ -199,4 +215,62 @@ test('WhatsApp: any staff member can send; the message is stored once, with who 
   assert.equal(rows[0].sender, 'Recepção');
   assert.equal(rows[0].patient_id, patient);
   assert.equal(rows[0].from_me, true);
+});
+
+const webhook = (payload) => fetch(`${base.replace('/admin', '/webhooks/evolution')}?secret=segredo-webhook`, {
+  method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload),
+}).then((r) => r.json());
+const received = (id, message) => ({
+  event: 'messages.upsert', instance: 'clinica-teste',
+  data: { key: { remoteJid: '5531966660000@s.whatsapp.net', fromMe: false, id }, pushName: 'Carla', message, messageTimestamp: 1793000000 },
+});
+
+test('WhatsApp: received photos are copied into Storage; a failed download can be retried', async () => {
+  const res = await webhook(received('IMG1', { imageMessage: { mimetype: 'image/jpeg', caption: 'Foto' } }));
+  assert.equal(res.midias, 1);
+  const row = (await db.query(`select * from whatsapp_messages where wa_message_id = 'IMG1'`)).rows[0];
+  assert.equal(row.media_status, 'ok');
+  assert.match(row.media_path, /^whatsapp\/recebidas\/\d{4}-\d{2}\/IMG1\.jpg$/);
+  assert.equal(readFileSync(path.join(storageDir, 'prontuario', row.media_path), 'utf8'), 'jpeg:IMG1');
+
+  await webhook(received('FAILMEDIA', { videoMessage: { mimetype: 'video/mp4' } }));
+  const failed = (await db.query(`select * from whatsapp_messages where wa_message_id = 'FAILMEDIA'`)).rows[0];
+  assert.equal(failed.media_status, 'erro');
+  assert.match(failed.media_error, /Message not found/);
+
+  evo.mediaFails = false;
+  const rec = await login('rec@t.dev');
+  const retry = await fetch(base.replace('/admin', '/whatsapp/midia'), {
+    method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${rec}` }, body: JSON.stringify({ id: failed.id }),
+  });
+  assert.equal(retry.status, 200);
+  assert.equal((await db.query(`select media_status from whatsapp_messages where id = $1`, [failed.id])).rows[0].media_status, 'ok');
+});
+
+test('WhatsApp: sending a file the browser uploaded, and a voice note', async () => {
+  const rec = await login('rec@t.dev');
+  const file = 'whatsapp/enviadas/2026-10/abc-orcamento.pdf';
+  mkdirSync(path.join(storageDir, 'prontuario', path.dirname(file)), { recursive: true });
+  writeFileSync(path.join(storageDir, 'prontuario', file), 'pdf-bytes');
+
+  assert.equal((await send({ telefone: '31966660000', midia: { path: '../segredo', mime: 'application/pdf' } }, rec)).body.erro.codigo, 'campo_invalido');
+
+  const sent = await send({ telefone: '31966660000', texto: 'Segue o orçamento', midia: { path: file, mime: 'application/pdf', nome: 'orcamento.pdf', tamanho: 9 } }, rec);
+  assert.equal(sent.status, 200);
+  const call = evo.calls.at(-1);
+  assert.equal(call.url, '/message/sendMedia/clinica-teste');
+  assert.deepEqual([call.body.mediatype, call.body.mimetype, call.body.caption, call.body.fileName], ['document', 'application/pdf', 'Segue o orçamento', 'orcamento.pdf']);
+  await new Promise((r) => setTimeout(r, 200));
+  assert.equal(evo.fetched, 'pdf-bytes', 'Evolution can download the file from the signed link');
+  const row = (await db.query(`select * from whatsapp_messages where wa_message_id = $1`, [sent.body.mensagem_id])).rows[0];
+  assert.deepEqual([row.media_kind, row.media_status, row.media_path, row.body], ['documento', 'ok', file, 'Segue o orçamento']);
+
+  const voice = 'whatsapp/enviadas/2026-10/audio.webm';
+  writeFileSync(path.join(storageDir, 'prontuario', voice), 'opus');
+  const audio = await send({ telefone: '31966660000', voz: true, midia: { path: voice, mime: 'audio/webm;codecs=opus' } }, rec);
+  assert.equal(audio.status, 200);
+  assert.equal(evo.calls.at(-1).url, '/message/sendWhatsAppAudio/clinica-teste');
+  const audioRow = (await db.query(`select media_kind, media_path from whatsapp_messages where wa_message_id = $1`, [audio.body.mensagem_id])).rows[0];
+  assert.deepEqual([audioRow.media_kind, audioRow.media_path], ['audio', voice]);
+  assert.ok(existsSync(path.join(storageDir, 'prontuario', voice)));
 });

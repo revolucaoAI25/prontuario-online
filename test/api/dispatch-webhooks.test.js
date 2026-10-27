@@ -161,7 +161,7 @@ test('Evolution webhook rejects a wrong secret', async () => {
 test('Evolution messages are stored once and linked to the patient by phone', async () => {
   const patient = await createPatient(db, { name: 'Zuleica Zap', phone: '(31) 99876-5432' });
   const msg = upsert({ id: 'MSG1', remoteJid: '5531998765432@s.whatsapp.net', fromMe: false }, { conversation: 'Posso remarcar?' });
-  assert.deepEqual((await evolution(msg)).body, { ok: true, recebidas: 1, gravadas: 1 });
+  assert.deepEqual((await evolution(msg)).body, { ok: true, recebidas: 1, gravadas: 1, atualizadas: 0, midias: 0 });
   assert.equal((await evolution(msg)).body.gravadas, 0, 'idempotent');
 
   await evolution({
@@ -194,4 +194,45 @@ test('a conversation keeps the contact name after we reply', async () => {
   await evolution(upsert({ remoteJid: '5531955556666@s.whatsapp.net', fromMe: true, id: 'NOME2' }, { conversation: 'Olá!' }, { messageTimestamp: 1793000100 }));
   const conv = await one(db, `select push_name, last_body, last_from_me from whatsapp_conversations where remote_jid = '5531955556666@s.whatsapp.net'`);
   assert.deepEqual([conv.push_name, conv.last_body, conv.last_from_me], ['Bruno', 'Olá!', true]);
+});
+
+test('delivery status only moves forward (sent → delivered → read)', async () => {
+  await evolution(upsert({ remoteJid: '5531955557777@s.whatsapp.net', fromMe: true, id: 'ST1' }, { conversation: 'Confirmado!' }, { status: 'SERVER_ACK' }));
+  const update = (status) => evolution({ event: 'messages.update', instance: 'clinica', data: { keyId: 'ST1', remoteJid: '5531955557777@s.whatsapp.net', fromMe: true, status } });
+  const status = async () => (await one(db, `select status from whatsapp_messages where wa_message_id = 'ST1'`)).status;
+  assert.equal(await status(), 'enviado');
+  await update('READ');
+  assert.equal(await status(), 'lido');
+  await update('DELIVERY_ACK');
+  assert.equal(await status(), 'lido', 'a late delivery receipt does not undo read');
+  // Baileys-style payload
+  await evolution({ event: 'MESSAGES_UPDATE', instance: 'clinica', data: [{ key: { id: 'ST1' }, update: { status: 5 } }] });
+  assert.equal(await status(), 'lido');
+});
+
+test('media, locations and contacts are described; media waits to be downloaded', async () => {
+  await evolution(upsert({ remoteJid: '5531955558888@s.whatsapp.net', fromMe: false, id: 'MID1' },
+    { imageMessage: { mimetype: 'image/jpeg', caption: 'Olha a mancha', fileLength: '52344', url: 'https://mmg.whatsapp.net/x' } }));
+  await evolution(upsert({ remoteJid: '5531955558888@s.whatsapp.net', fromMe: false, id: 'MID2' },
+    { documentWithCaptionMessage: { message: { documentMessage: { mimetype: 'application/pdf', fileName: 'exame.pdf', caption: 'Meu exame' } } } }));
+  await evolution(upsert({ remoteJid: '5531955558888@s.whatsapp.net', fromMe: false, id: 'MID3' },
+    { locationMessage: { degreesLatitude: -19.9, degreesLongitude: -43.9, name: 'Clínica' } }));
+  const { rows } = await db.query(`select wa_message_id, body, media_kind, media_status, media_mime, media_name, media_size
+                                   from whatsapp_messages where wa_message_id like 'MID%' order by wa_message_id`);
+  assert.deepEqual(rows.map((r) => [r.body, r.media_kind, r.media_status]), [
+    ['Olha a mancha', 'imagem', 'pendente'],
+    ['Meu exame', 'documento', 'pendente'],
+    ['📍 Localização: Clínica https://maps.google.com/?q=-19.9,-43.9', null, null],
+  ]);
+  assert.equal(rows[0].media_size, '52344');
+  assert.equal(rows[1].media_name, 'exame.pdf');
+});
+
+test('opening a conversation marks it read for the whole team', async () => {
+  await evolution(upsert({ remoteJid: '5531955559999@s.whatsapp.net', fromMe: false, id: 'UN1' }, { conversation: 'Oi' }));
+  await evolution(upsert({ remoteJid: '5531955559999@s.whatsapp.net', fromMe: false, id: 'UN2' }, { conversation: 'Alguém?' }, { messageTimestamp: 1793000050 }));
+  const unread = async () => Number((await one(db, `select unread_count from whatsapp_conversations where remote_jid = '5531955559999@s.whatsapp.net'`)).unread_count);
+  assert.equal(await unread(), 2);
+  await db.query(`select mark_whatsapp_read('5531955559999@s.whatsapp.net')`);
+  assert.equal(await unread(), 0);
 });

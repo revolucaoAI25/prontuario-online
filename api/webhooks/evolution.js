@@ -1,5 +1,6 @@
 import { timingSafeEqual } from 'node:crypto';
 import { storeEvolutionEvent } from '../../server/evolution.js';
+import { downloadPendingMedia } from '../../server/evolution-admin.js';
 
 function secretMatches(given, expected) {
   if (!given || !expected) return false;
@@ -17,7 +18,8 @@ async function readJson(req) {
 
 // Configure in the Evolution instance: webhook URL
 //   https://<domain>/api/webhooks/evolution?secret=<EVOLUTION_WEBHOOK_SECRET>
-// with the MESSAGES_UPSERT (and optionally SEND_MESSAGE) events.
+// with the MESSAGES_UPSERT, SEND_MESSAGE and MESSAGES_UPDATE events (the
+// "Conectar" button in Ajustes does this).
 export default async function handler(req, res) {
   res.setHeader('Content-Type', 'application/json; charset=utf-8');
   const url = new URL(req.url, 'http://localhost');
@@ -31,9 +33,13 @@ export default async function handler(req, res) {
     return res.end(JSON.stringify({ ok: false }));
   }
   try {
-    const result = await storeEvolutionEvent(await readJson(req));
+    const { midias_pendentes: media, ...result } = await storeEvolutionEvent(await readJson(req));
+    // Copy attachments into Storage before answering (the function may be
+    // frozen right after the response). A failure stays visible in the
+    // conversation with a "try again" button.
+    await downloadPendingMedia(media);
     res.statusCode = 200;
-    res.end(JSON.stringify({ ok: true, ...result }));
+    res.end(JSON.stringify({ ok: true, ...result, midias: media.length }));
   } catch (error) {
     console.error(error);
     res.statusCode = error instanceof SyntaxError ? 400 : 500;

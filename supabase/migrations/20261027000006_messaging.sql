@@ -88,12 +88,46 @@ create table whatsapp_messages (
     raw jsonb,
     -- staff member who sent it from the system (null: sent from the phone)
     sent_by uuid references staff (id) on delete set null,
+    -- delivery of our own messages: pendente → enviado → entregue → lido (or erro)
+    status text check (status in ('pendente', 'enviado', 'entregue', 'lido', 'erro')),
+    -- photos, videos, audio, documents and stickers are copied into Storage
+    -- (bucket "prontuario", folder whatsapp/), since WhatsApp's links expire
+    media_kind text check (media_kind in ('imagem', 'video', 'audio', 'documento', 'figurinha')),
+    media_status text check (media_status in ('pendente', 'ok', 'erro')),
+    media_path text,
+    media_mime text,
+    media_name text,
+    media_size bigint,
+    media_error text,
     created_at timestamptz not null default now(),
     unique (instance, wa_message_id)
 );
 
 create index whatsapp_messages_jid_idx on whatsapp_messages (remote_jid, sent_at desc);
 create index whatsapp_messages_patient_idx on whatsapp_messages (patient_id);
+
+-- Only moves forward: a late "delivered" never undoes "read".
+create function whatsapp_status_rank(p_status text) returns integer
+language sql immutable parallel safe as $$
+    select case p_status
+        when 'erro' then 0 when 'pendente' then 1 when 'enviado' then 2
+        when 'entregue' then 3 when 'lido' then 4 else -1 end
+$$;
+
+-- The WhatsApp inbox is shared: once someone on the team opens a
+-- conversation, it is read for everybody.
+create table whatsapp_reads (
+    remote_jid text primary key,
+    read_at timestamptz not null default now(),
+    read_by uuid references staff (id) on delete set null
+);
+
+create function mark_whatsapp_read(p_remote_jid text) returns void
+language sql as $$
+    insert into whatsapp_reads (remote_jid, read_at, read_by)
+    values (p_remote_jid, now(), auth.uid())
+    on conflict (remote_jid) do update set read_at = excluded.read_at, read_by = excluded.read_by
+$$;
 
 create function match_patient_by_phone(p_digits text) returns uuid
 language sql stable as $$
@@ -118,9 +152,15 @@ from (
                                where x.remote_jid = m.remote_jid and x.push_name is not null
                                order by x.sent_at desc limit 1)) as push_name,
         m.body as last_body,
+        m.media_kind as last_media_kind,
         m.from_me as last_from_me,
+        m.status as last_status,
         m.sent_at as last_at,
-        (select count(*) from whatsapp_messages x where x.remote_jid = m.remote_jid) as message_count
+        (select count(*) from whatsapp_messages x where x.remote_jid = m.remote_jid) as message_count,
+        (select count(*) from whatsapp_messages x
+         where x.remote_jid = m.remote_jid and not x.from_me
+           and x.sent_at > coalesce((select r.read_at from whatsapp_reads r where r.remote_jid = m.remote_jid), '-infinity'::timestamptz)
+        ) as unread_count
     from whatsapp_messages m
     order by m.remote_jid, m.sent_at desc
 ) c

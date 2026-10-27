@@ -49,6 +49,30 @@ function userObject(row) {
   };
 }
 
+const MIME_BY_EXT = {
+  jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp', gif: 'image/gif',
+  mp4: 'video/mp4', ogg: 'audio/ogg', oga: 'audio/ogg', mp3: 'audio/mpeg', webm: 'audio/webm', pdf: 'application/pdf',
+};
+
+// Browsers upload through supabase-js as multipart form data (a
+// "cacheControl" field plus the file); Node sends the raw bytes.
+function fileFromUpload(contentType = '', body) {
+  const boundary = contentType.match(/multipart\/form-data;\s*boundary=(.+)$/)?.[1];
+  if (!boundary) return body;
+  const delimiter = Buffer.from(`--${boundary.replace(/^"|"$/g, '')}`);
+  let start = body.indexOf(delimiter);
+  while (start !== -1) {
+    const next = body.indexOf(delimiter, start + delimiter.length);
+    if (next === -1) break;
+    const part = body.subarray(start + delimiter.length + 2, next - 2);
+    const headerEnd = part.indexOf('\r\n\r\n');
+    const headers = part.subarray(0, headerEnd).toString();
+    if (!/name="cacheControl"/.test(headers)) return part.subarray(headerEnd + 4);
+    start = next;
+  }
+  return body;
+}
+
 export function createEmulator({ databaseUrl, postgrestUrl, storageDir }) {
   const db = new pg.Pool({ connectionString: databaseUrl, max: 3 });
   const refreshTokens = new Map();
@@ -177,6 +201,8 @@ export function createEmulator({ databaseUrl, postgrestUrl, storageDir }) {
       if (!claims || claims.url !== `${signed[1]}/${signed[2]}`) return send(res, 400, { message: 'invalid token' });
       const file = path.join(storageDir, signed[1], signed[2]);
       if (!existsSync(file)) return send(res, 404, { message: 'not found' });
+      const type = MIME_BY_EXT[path.extname(file).slice(1).toLowerCase()];
+      if (type) res.setHeader('content-type', type);
       return res.end(readFileSync(file));
     }
     const claims = claimsOf(req);
@@ -186,11 +212,20 @@ export function createEmulator({ databaseUrl, postgrestUrl, storageDir }) {
       const token = signJwt({ url: `${signed[1]}/${signed[2]}`, exp: Math.floor(Date.now() / 1000) + (body.expiresIn ?? 60) });
       return send(res, 200, { signedURL: `/object/sign/${signed[1]}/${signed[2]}?token=${token}` });
     }
+    const signMany = route.match(/^\/object\/sign\/([^/]+)$/);
+    if (signMany && req.method === 'POST') {
+      const body = JSON.parse((await readBody(req)).toString() || '{}');
+      return send(res, 200, (body.paths ?? []).map((p) => ({
+        error: null,
+        path: p,
+        signedURL: `/object/sign/${signMany[1]}/${p}?token=${signJwt({ url: `${signMany[1]}/${p}`, exp: Math.floor(Date.now() / 1000) + (body.expiresIn ?? 60) })}`,
+      })));
+    }
     const object = route.match(/^\/object\/([^/]+)\/(.+)$/);
     if (object && (req.method === 'POST' || req.method === 'PUT')) {
       const file = path.join(storageDir, object[1], object[2]);
       mkdirSync(path.dirname(file), { recursive: true });
-      writeFileSync(file, await readBody(req));
+      writeFileSync(file, fileFromUpload(req.headers['content-type'], await readBody(req)));
       return send(res, 200, { Key: `${object[1]}/${object[2]}` });
     }
     const bucket = route.match(/^\/object\/([^/]+)$/);
