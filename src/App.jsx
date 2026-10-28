@@ -18,6 +18,11 @@ function AdminOnly({ children }) {
   return isAdmin ? children : <Navigate to="/agenda" replace />;
 }
 
+function ReceptionOnly({ children }) {
+  const { isReception } = useAuth();
+  return isReception ? children : <Navigate to="/agenda" replace />;
+}
+
 export function App() {
   const { session, staff, loading } = useAuth();
   if (loading) return <div className="splash"><img src="/brand/logo-mark.png" alt="" /></div>;
@@ -35,7 +40,7 @@ export function App() {
         <Route path="/conversas" element={<ConversationsPage />} />
         <Route path="/lembretes" element={<RemindersPage />} />
         <Route path="/estoque" element={<StockPage />} />
-        <Route path="/financeiro" element={<AdminOnly><FinancePage /></AdminOnly>} />
+        <Route path="/financeiro" element={<ReceptionOnly><FinancePage /></ReceptionOnly>} />
         <Route path="/configuracoes" element={<AdminOnly><SettingsPage /></AdminOnly>} />
         <Route path="*" element={<Navigate to="/agenda" replace />} />
       </Route>

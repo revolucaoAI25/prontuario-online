@@ -219,7 +219,7 @@ export function AppointmentSheet({ appointment, agendas, onClose, onChanged }) {
           {showMoney && (
             <div className="card card-pad">
               <div className="section-title">Financeiro</div>
-              <PaymentsPanel patientId={appointment.patient_id} appointmentId={appointment.id} />
+              <PaymentsPanel patientId={appointment.patient_id} appointmentId={appointment.id} agendaId={appointment.agenda_id} />
             </div>
           )}
           <div className="card card-pad">

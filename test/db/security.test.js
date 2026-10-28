@@ -56,7 +56,7 @@ test('record entries are signed by their author and only editable by them or the
   assert.equal(byAdmin, 1);
 });
 
-test('the finance report is for the admin only', async () => {
+test('the finance report is for the admin and the reception, not professionals', async () => {
   const patient = await createPatient(db, { name: 'Pagante' });
   await asUser(db, secretaria, () =>
     db.query(
@@ -66,7 +66,7 @@ test('the finance report is for the admin only', async () => {
     ),
   );
   await expectDbError(
-    asUser(db, secretaria, () => db.query(`select finance_summary(clinic_today(), clinic_today())`)),
+    asUser(db, simone, () => db.query(`select finance_summary(clinic_today(), clinic_today())`)),
     'acesso_negado',
   );
   const summary = await asUser(db, admin, async () =>

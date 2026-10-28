@@ -2,11 +2,13 @@
 -- Opening hours are a placeholder (Mon–Fri 08:00–18:00) to be adjusted in
 -- Configurações.
 
-insert into agendas (name, color, slot_step_minutes, sort_order) values
-    ('Dr. Everson Rezeck', '#0F5C66', 20, 1),
-    ('Simone Rezeck', '#7A5C99', 20, 2),
-    ('Estética', '#B07A4F', 30, 3),
-    ('Depilação a laser', '#4F7FA8', 30, 4);
+-- The reception sees the takings of Estética and Depilação (commissions),
+-- not those of the two doctors.
+insert into agendas (name, color, slot_step_minutes, sort_order, finance_shared) values
+    ('Dr. Everson Rezeck', '#0F5C66', 20, 1, false),
+    ('Simone Rezeck', '#7A5C99', 20, 2, false),
+    ('Estética', '#B07A4F', 30, 3, true),
+    ('Depilação a laser', '#4F7FA8', 30, 4, true);
 
 insert into agenda_hours (agenda_id, weekday, start_time, end_time)
 select a.id, d.weekday, '08:00', '18:00'

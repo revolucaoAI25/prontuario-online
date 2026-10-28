@@ -17,7 +17,7 @@ const NAV = [
   { to: '/conversas', label: 'WhatsApp', icon: MessageCircle, badge: 'whatsapp' },
   { to: '/lembretes', label: 'Lembretes', icon: BellRing },
   { to: '/estoque', label: 'Estoque', icon: Package },
-  { to: '/financeiro', label: 'Financeiro', icon: Wallet, admin: true },
+  { to: '/financeiro', label: 'Financeiro', icon: Wallet, reception: true },
   { to: '/configuracoes', label: 'Ajustes', icon: Settings, admin: true },
 ];
 
@@ -96,7 +96,7 @@ function useUnreadWhatsApp() {
 }
 
 export function Layout() {
-  const { staff, isAdmin, signOut } = useAuth();
+  const { staff, isAdmin, isReception, signOut } = useAuth();
   const unread = { chat: useUnreadChat(staff?.id), whatsapp: useUnreadWhatsApp() };
   useEffect(() => { installSoundUnlock(); }, []);
   return (
@@ -106,7 +106,7 @@ export function Layout() {
           <img src="/brand/logo-mark.png" alt="Everson Rezeck" />
         </NavLink>
         <nav className="rail-nav">
-          {NAV.filter((item) => !item.admin || isAdmin).map(({ to, label, icon: Icon, badge }) => (
+          {NAV.filter((item) => (item.admin ? isAdmin : item.reception ? isReception : true)).map(({ to, label, icon: Icon, badge }) => (
             <NavLink key={to} to={to} className={({ isActive }) => `rail-btn ${isActive ? 'active' : ''}`}>
               <Icon />
               <span className="label">{label}</span>

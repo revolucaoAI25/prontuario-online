@@ -47,7 +47,7 @@ function AgendaEditor({ agenda, onSaved }) {
 
   async function save() {
     try {
-      await must(supabase.from('agendas').update({ name: info.name, color: info.color, slot_step_minutes: Number(info.slot_step_minutes) || 30 }).eq('id', agenda.id));
+      await must(supabase.from('agendas').update({ name: info.name, color: info.color, slot_step_minutes: Number(info.slot_step_minutes) || 30, finance_shared: Boolean(info.finance_shared) }).eq('id', agenda.id));
 
       const keepTypes = types.filter((t) => t.id).map((t) => t.id);
       const removed = agenda.appointment_types.filter((t) => t.active && !keepTypes.includes(t.id)).map((t) => t.id);
@@ -86,6 +86,10 @@ function AgendaEditor({ agenda, onSaved }) {
           <input className="input" type="number" min="5" max="240" value={info.slot_step_minutes} onChange={(e) => setInfo({ ...info, slot_step_minutes: e.target.value })} />
         </Field>
       </div>
+      <label className="check" style={{ marginBottom: 14 }}>
+        <input type="checkbox" checked={Boolean(info.finance_shared)} onChange={(e) => setInfo({ ...info, finance_shared: e.target.checked })} />
+        A recepção vê o faturamento desta agenda (para calcular comissões)
+      </label>
 
       <div className="section-title" style={{ marginTop: 6 }}>Tipos de atendimento</div>
       {types.map((t, i) => (

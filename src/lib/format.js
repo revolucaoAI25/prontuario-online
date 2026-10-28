@@ -7,6 +7,12 @@ export function initials(name) {
 const money = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
 export const formatMoney = (value) => money.format(Number(value ?? 0));
 
+// "1.283,50" (Brazilian) or "80.50" → 1283.5; NaN when it is not a number.
+export function parseMoney(text) {
+  const raw = String(text ?? '').trim().replace(/^R\$\s*/i, '');
+  return Number(raw.includes(',') ? raw.replace(/\./g, '').replace(',', '.') : raw);
+}
+
 export function whatsappLink(phone) {
   let d = String(phone ?? '').replace(/\D/g, '');
   if (d.length < 10) return null;
