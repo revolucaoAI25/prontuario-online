@@ -94,6 +94,15 @@ test('turning sharing on in Ajustes shows that agenda to the reception', async (
   assert.deepEqual(await visibleAmounts(secretaria), [260, 300]);
 });
 
+test('an archived agenda shows up in the report only when it has money in the period', async () => {
+  const old = await one(db, `insert into agendas (name, active, sort_order) values ('Consultório antigo', false, 9) returning id`);
+  const names = async () => (await summary(admin)).por_agenda.map((a) => a.nome);
+  assert.ok(!(await names()).includes('Consultório antigo'));
+  await db.query(`insert into payments (patient_id, agenda_id, amount, method, status, occurred_on) values ($1, $2, 70, 'pix', 'pago', clinic_today() - 1)`, [patient, old.id]);
+  assert.ok((await names()).includes('Consultório antigo'));
+  await db.query(`delete from payments where agenda_id = $1`, [old.id]);
+});
+
 test('a counter sale with no agenda is visible to the team', async () => {
   await asUser(db, secretaria, () =>
     db.query(`insert into payments (patient_id, amount, method, status, occurred_on, description) values ($1, 45, 'pix', 'pago', clinic_today() - 1, 'Sabonete')`, [patient]),

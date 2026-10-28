@@ -92,7 +92,9 @@ begin
         select * from expenses where occurred_on between p_from and p_to
     ),
     buckets as (
-        select a.id, a.name, a.color, a.sort_order from agendas a where a.active and finance_visible(a.id)
+        -- Archived agendas (FastClinic's old ones) only when they have money in the period.
+        select a.id, a.name, a.color, a.sort_order from agendas a
+        where finance_visible(a.id) and (a.active or exists (select 1 from p where p.agenda_id = a.id))
         union all
         select null, 'Sem agenda (balcão)', null, 1000 where exists (select 1 from p where agenda_id is null)
     )
