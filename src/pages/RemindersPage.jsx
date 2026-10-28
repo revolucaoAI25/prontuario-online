@@ -22,15 +22,6 @@ const TABS = [
 
 async function countReminders() {
   const head = (build) => build(supabase.from('reminders').select('id', { count: 'exact', head: true })).then((r) => r.count ?? 0);
-  async function remove(r) {
-    // eslint-disable-next-line no-alert
-    if (!window.confirm(`Apagar o lembrete de ${r.procedure?.name ?? 'retorno'} de ${r.patient?.full_name}?`)) return;
-    const { error } = await supabase.from('reminders').delete().eq('id', r.id);
-    if (error) return toast.error(error);
-    reload();
-    reloadCounts();
-  }
-
   const today = localDay();
   const [proximos, pendentes, enviado, expirado, erro, cancelado] = await Promise.all([
     head((q) => q.eq('status', 'pendente').gte('due_on', addDays(today, -30)).lte('due_on', addDays(today, 30))),
@@ -100,6 +91,15 @@ export function RemindersPage() {
   async function update(id, changes) {
     const { error } = await supabase.from('reminders').update(changes).eq('id', id);
     if (error) return toast.error(/one_pending/.test(error.message) ? 'Já existe outro lembrete pendente desse procedimento.' : error);
+    reload();
+    reloadCounts();
+  }
+
+  async function remove(r) {
+    // eslint-disable-next-line no-alert
+    if (!window.confirm(`Apagar o lembrete de ${r.procedure?.name ?? 'retorno'} de ${r.patient?.full_name}?`)) return;
+    const { error } = await supabase.from('reminders').delete().eq('id', r.id);
+    if (error) return toast.error(error);
     reload();
     reloadCounts();
   }
