@@ -237,6 +237,8 @@ async function importPatients(ms, pgc) {
      from jsonb_to_recordset($1::jsonb) as x(
        legacy_id int, full_name text, cpf text, email text, phone text, phone_alt text, profession text,
        birth_date date, address text, notes text, allow_messages boolean, legacy_raw jsonb, created_at timestamptz)
+     -- a patient merged into another in the app stays merged
+     where not exists (select 1 from patient_legacy_aliases al where al.legacy_id = x.legacy_id)
      on conflict (legacy_id) do update set
        full_name = excluded.full_name, cpf = excluded.cpf, email = excluded.email, phone = excluded.phone,
        phone_alt = excluded.phone_alt, profession = excluded.profession, birth_date = excluded.birth_date,
@@ -291,7 +293,7 @@ async function importRecords(ms, pgc) {
     `insert into record_entries (legacy_id, patient_id, entry_at, content, legacy_synced_at)
      select x.legacy_id, p.id, local_timestamp(x.entry_date, '12:00'), x.content, now()
      from jsonb_to_recordset($1::jsonb) as x(legacy_id int, patient_legacy_id int, entry_date date, content text)
-     join patients p on p.legacy_id = x.patient_legacy_id
+     join patients p on p.id = patient_by_legacy(x.patient_legacy_id)
      on conflict (legacy_id) do update set
        patient_id = excluded.patient_id, entry_at = excluded.entry_at, content = excluded.content, legacy_synced_at = now()
      where record_entries.updated_at <= record_entries.legacy_synced_at + interval '5 seconds'
@@ -381,7 +383,7 @@ async function importAppointments(ms, pgc, agendaIds) {
          select x.*, p.id as patient_id, local_timestamp(x.day, x.time::time) as starts_at
          from jsonb_to_recordset($1::jsonb) as x(legacy_id int, agenda_id uuid, patient_legacy_id int, day date,
                                                 time text, kind text, procedure text, status appointment_status, notes text)
-         join patients p on p.legacy_id = x.patient_legacy_id
+         join patients p on p.id = patient_by_legacy(x.patient_legacy_id)
        ),
        typed as (
          select s.*, t.id as type_id, coalesce(t.duration_minutes, 30) as duration
@@ -432,7 +434,7 @@ async function importAppointments(ms, pgc, agendaIds) {
   const exportIds = appointments.map((a) => a.legacy_id);
   const removed = await pgc.query(
     `update appointments
-     set status = 'cancelado', cancel_reason = 'Excluído no FastClinic', legacy_synced_at = now()
+     set status = 'cancelado', cancel_reason = 'Excluído no FastClinic', removed_at = now(), legacy_synced_at = now()
      where source = 'legado' and legacy_id <> all($1::int[]) and status <> 'cancelado' and starts_at > now()
        and updated_at <= legacy_synced_at + interval '5 seconds'
      returning id`,
@@ -482,7 +484,7 @@ async function importSales(ms, pgc) {
       `insert into payments (legacy_id, patient_id, appointment_id, amount, method, status, occurred_on, description, legacy_synced_at)
        select x.legacy_id, p.id, a.id, x.amount, 'outro', 'pago', x.day, x.description, now()
        from jsonb_to_recordset($1::jsonb) as x(legacy_id int, patient_legacy_id int, visit_legacy_id int, day date, amount numeric, description text)
-       join patients p on p.legacy_id = x.patient_legacy_id
+       join patients p on p.id = patient_by_legacy(x.patient_legacy_id)
        left join appointments a on a.legacy_id = x.visit_legacy_id
        on conflict (legacy_id) do update set
          patient_id = excluded.patient_id, appointment_id = excluded.appointment_id, amount = excluded.amount,

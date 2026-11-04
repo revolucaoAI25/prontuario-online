@@ -291,15 +291,17 @@ export async function availability(body) {
 
 const firstName = (name) => String(name ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim().split(/\s+/)[0] || '';
 
-// CPF identifies a person. A phone may be shared (a mother booking for her
-// daughter), so when a name is given the phone only matches a patient whose
-// first name agrees; otherwise a new patient is registered.
+// Who is this person, without creating duplicates: CPF; then the phone, as
+// long as the first name agrees (a mother booking for her daughter shares the
+// phone and gets her own record); then the e-mail; then the exact full name
+// when exactly one patient has it and the birth date does not contradict it.
 async function findPatientMatch(client, patient) {
   const cpf = String(patient.cpf ?? '').replace(/\D/g, '');
   if (cpf.length === 11) {
     const row = (await client.query(`select id from patients where only_digits(cpf) = $1 limit 1`, [cpf])).rows[0];
     if (row) return row.id;
   }
+  const wanted = firstName(patient.nome);
   if (patient.telefone) {
     const { rows } = await client.query(
       `select id, full_name from patients
@@ -307,21 +309,51 @@ async function findPatientMatch(client, patient) {
        order by updated_at desc`,
       [String(patient.telefone)],
     );
-    const wanted = firstName(patient.nome);
     const match = wanted ? rows.find((r) => firstName(r.full_name) === wanted) : rows[0];
     if (match) return match.id;
+  }
+  const email = String(patient.email ?? '').trim().toLowerCase();
+  if (email.includes('@')) {
+    const { rows } = await client.query(`select id, full_name from patients where lower(btrim(email)) = $1`, [email]);
+    const match = rows.length === 1 ? rows[0] : rows.find((r) => firstName(r.full_name) === wanted);
+    if (match) return match.id;
+  }
+  const name = String(patient.nome ?? '').trim();
+  if (name.split(/\s+/).length >= 2) {
+    const birth = patient.data_nascimento ? parseDate(patient.data_nascimento, 'paciente.data_nascimento') : null;
+    const { rows } = await client.query(
+      `select id from patients
+       where regexp_replace(normalize_text(btrim(full_name)), '\\s+', ' ', 'g') = regexp_replace(normalize_text(btrim($1)), '\\s+', ' ', 'g')
+         and ($2::date is null or birth_date is null or birth_date = $2::date)
+       limit 2`,
+      [name, birth],
+    );
+    if (rows.length === 1) return rows[0].id;
   }
   return null;
 }
 
-// Fills only fields the existing record doesn't have yet.
+// Fills only fields the existing record doesn't have yet. A phone the record
+// doesn't know becomes the main one (that is where the patient is writing
+// from now); the previous one moves to the second phone and into the notes.
 async function completePatient(client, id, patient) {
+  const birth = patient.data_nascimento ? parseDate(patient.data_nascimento, 'paciente.data_nascimento') : null;
   await client.query(
     `update patients set
-       phone = coalesce(phone, $2), cpf = coalesce(cpf, $3), email = coalesce(email, $4),
+       phone = case when phone_key($2) is not null and phone_key($2) is distinct from phone_key(phone)
+                         and phone_key($2) is distinct from phone_key(phone_alt) then $2 else coalesce(phone, $2) end,
+       phone_alt = case when phone is not null and phone_key($2) is not null and phone_key($2) is distinct from phone_key(phone)
+                             and phone_key($2) is distinct from phone_key(phone_alt) then phone else phone_alt end,
+       notes = case when phone is not null and phone_key($2) is not null and phone_key($2) is distinct from phone_key(phone)
+                         and phone_key($2) is distinct from phone_key(phone_alt)
+                    then concat_ws(E'\n', notes, 'Telefone anterior: ' || phone
+                         || coalesce(' / ' || phone_alt, '') || ' (número novo informado pelo WhatsApp em '
+                         || to_char(clinic_today(), 'DD/MM/YYYY') || ')')
+                    else notes end,
+       cpf = coalesce(cpf, $3), email = coalesce(email, $4),
        birth_date = coalesce(birth_date, $5::date)
      where id = $1`,
-    [id, patient.telefone ?? null, patient.cpf ?? null, patient.email ?? null, patient.data_nascimento ? parseDate(patient.data_nascimento, 'paciente.data_nascimento') : null],
+    [id, patient.telefone ? String(patient.telefone) : null, patient.cpf ?? null, patient.email ?? null, birth],
   );
 }
 
