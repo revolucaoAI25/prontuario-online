@@ -10,6 +10,7 @@ import { addDays, formatDay, formatFullDate, formatWeekday, localDay } from '../
 import { Empty } from '../components/ui.jsx';
 import { ExpensesTab } from './finance/ExpensesTab.jsx';
 import { usePeriod } from './finance/period.jsx';
+import { FinanceGate } from './finance/FinanceGate.jsx';
 
 const summaryFor = (from, to) => must(supabase.rpc('finance_summary', { p_from: from, p_to: to }));
 const paymentsFor = (from, to) => must(
@@ -48,7 +49,7 @@ function PaymentsTable({ rows, onMarkPaid, showDay }) {
 function useMarkPaid(after) {
   const toast = useToast();
   return async (p) => {
-    const { error } = await supabase.from('payments').update({ status: 'pago', method: p.method ?? 'pix' }).eq('id', p.id);
+    const { error } = await supabase.from('payments').update({ status: 'pago', method: p.method ?? 'outro' }).eq('id', p.id);
     if (error) return toast.error(error);
     after();
   };
@@ -235,6 +236,10 @@ const TABS = [
 // Dr. Everson sees every agenda; the reception sees the agendas shared with
 // it (Ajustes → Agendas) and records the expenses. The database enforces it.
 export function FinancePage() {
+  return <FinanceGate><FinanceTabs /></FinanceGate>;
+}
+
+function FinanceTabs() {
   const [tab, setTab] = useState('fechamento');
   const Current = TABS.find(([id]) => id === tab)[2];
   return (

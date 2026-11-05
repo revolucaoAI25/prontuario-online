@@ -34,6 +34,13 @@ export function AuthProvider({ children }) {
     // Admin and secretaries: the Financeiro screen (each sees what the database lets them).
     isReception: staff?.role === 'admin' || staff?.role === 'secretaria',
     isSuperAdmin: staff?.role === 'admin' && Boolean(staff?.is_superadmin),
+    // Each person silences their own notification sounds.
+    setMute: async (prefs) => {
+      const next = { mute_whatsapp: staff?.mute_whatsapp ?? false, mute_chat: staff?.mute_chat ?? false, ...prefs };
+      const { error } = await supabase.rpc('set_my_notification_prefs', { p_mute_whatsapp: next.mute_whatsapp, p_mute_chat: next.mute_chat });
+      if (!error) setStaff((s) => ({ ...s, ...next }));
+      return error;
+    },
     signIn: (email, password) => supabase.auth.signInWithPassword({ email, password }),
     signOut: () => supabase.auth.signOut(),
   };

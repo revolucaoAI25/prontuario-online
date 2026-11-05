@@ -4,6 +4,7 @@ import { UsersTab } from './UsersTab.jsx';
 import { AgendasTab } from './AgendasTab.jsx';
 import { ProceduresTab } from './ProceduresTab.jsx';
 import { ShortcutsTab } from './ShortcutsTab.jsx';
+import { FinanceTab } from './FinanceTab.jsx';
 import { IntegrationsTab, RemindersTab } from './IntegrationsTab.jsx';
 
 const TABS = [
@@ -12,6 +13,7 @@ const TABS = [
   ['procedimentos', 'Procedimentos e retornos', ProceduresTab],
   ['atalhos', 'Atalhos do prontuário', ShortcutsTab],
   ['lembretes', 'Lembretes', RemindersTab],
+  ['financeiro', 'Financeiro', FinanceTab],
   // webhooks and API: the agency's super admin only
   ['integracoes', 'Integrações', IntegrationsTab, 'super'],
 ];

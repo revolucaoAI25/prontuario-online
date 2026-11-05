@@ -1,15 +1,17 @@
 import { useEffect } from 'react';
 import { X } from 'lucide-react';
 import { initials } from '../lib/format.js';
-import { statusLabel } from '../lib/status.js';
+import { displayStatus, statusLabel } from '../lib/status.js';
 
 export function Avatar({ name, size }) {
   return <span className={`avatar ${size ?? ''}`}>{initials(name)}</span>;
 }
 
-export function StatusPill({ status }) {
+// removed: taken off the agenda ("Remover da agenda").
+export function StatusPill({ status, removed }) {
+  if (removed) return <span className="status-pill st-removido"><span className="dot" />Removido</span>;
   return (
-    <span className={`status-pill st-${status}`}>
+    <span className={`status-pill st-${displayStatus(status)}`}>
       <span className="dot" />
       {statusLabel(status)}
     </span>

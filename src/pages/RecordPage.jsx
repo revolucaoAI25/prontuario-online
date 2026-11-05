@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, CalendarPlus, CircleDollarSign, Maximize2, Minimize2, Paperclip, Pencil, Trash2, UserPen, MessageCircle } from 'lucide-react';
+import { ArrowLeft, CalendarPlus, CircleDollarSign, Maximize2, Minimize2, PanelRightClose, PanelRightOpen, Paperclip, Pencil, Trash2, UserPen, MessageCircle } from 'lucide-react';
 import { supabase, must } from '../lib/supabase.js';
 import { useLoad } from '../lib/hooks.js';
 import { useAuth } from '../context/AuthContext.jsx';
@@ -200,6 +200,17 @@ export function RecordPage() {
 
   // Full-screen notepad: only the record, the whole screen (Esc leaves).
   const [focus, setFocus] = useState(false);
+  // The side panel (visits, returns) is mostly for the reception: it starts
+  // hidden so the record takes the whole width; each computer remembers.
+  const [side, setSide] = useState(() => {
+    try { return localStorage.getItem('prontuario.painel') === 'aberto'; } catch { return false; }
+  });
+  function toggleSide() {
+    setSide((open) => {
+      try { localStorage.setItem('prontuario.painel', open ? 'fechado' : 'aberto'); } catch { /* not remembered */ }
+      return !open;
+    });
+  }
   useEffect(() => {
     document.body.classList.toggle('focus-mode', focus);
     if (!focus) return undefined;
@@ -227,7 +238,7 @@ export function RecordPage() {
   const entries = entriesLoad.data ?? [];
   const shown = useMemo(() => (filter.trim() ? entries.filter((e) => norm(e.content).includes(norm(filter.trim()))) : entries), [entries, filter]);
   const now = new Date();
-  const upcoming = (sideLoad.data?.appointments ?? []).filter((a) => new Date(a.starts_at) > now && a.status !== 'cancelado').reverse();
+  const upcoming = (sideLoad.data?.appointments ?? []).filter((a) => new Date(a.starts_at) > now && !a.removed_at).reverse();
   const past = (sideLoad.data?.appointments ?? []).filter((a) => new Date(a.starts_at) <= now);
 
   if (patientLoad.error) return <Empty>Paciente não encontrado.</Empty>;
@@ -255,13 +266,18 @@ export function RecordPage() {
         </div>
       </div>
 
-      <div className={`record-layout ${focus ? 'focus' : ''}`}>
+      <div className={`record-layout ${focus ? 'focus' : ''} ${side ? '' : 'no-side'}`}>
         <div className="card" style={{ display: 'flex', flexDirection: 'column', minHeight: 0 }}>
           <Composer patientId={patientId} shortcuts={shortcuts} onSaved={entriesLoad.reload} focus={focus} onToggleFocus={toggleFocus} />
           <div className="row" style={{ padding: '10px 18px 0' }}>
             <div className="section-title" style={{ margin: 0 }}>Prontuário · {entries.length} registros</div>
             <span className="grow" />
             <input className="input" style={{ width: 220 }} value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="Procurar no prontuário" />
+            {!focus && (
+              <button type="button" className="btn btn-sm" onClick={toggleSide} title={side ? 'Esconder o painel lateral' : 'Mostrar agendamentos e retornos'}>
+                {side ? <PanelRightClose /> : <PanelRightOpen />} {side ? 'Esconder painel' : 'Agendamentos e retornos'}
+              </button>
+            )}
           </div>
           <div className="timeline scroll">
             {shown.map((entry) => (
@@ -277,7 +293,7 @@ export function RecordPage() {
             {upcoming.length === 0 && <div className="small muted">Nenhum.</div>}
             {upcoming.map((a) => (
               <div key={a.id} className="side-item">
-                <div className="row"><b>{formatDay(localDay(a.starts_at))} {localTime(a.starts_at)}</b><span className="grow" /><StatusPill status={a.status} /></div>
+                <div className="row"><b>{formatDay(localDay(a.starts_at))} {localTime(a.starts_at)}</b><span className="grow" /><StatusPill status={a.status} removed={a.removed_at} /></div>
                 <div className="small muted">{a.agenda?.name}{proceduresOf(a).length ? ` · ${proceduresOf(a).map((p) => p.name).join(', ')}` : ''}</div>
               </div>
             ))}
@@ -288,7 +304,7 @@ export function RecordPage() {
             {past.length === 0 && <div className="small muted">Nenhum.</div>}
             {past.map((a) => (
               <div key={a.id} className="side-item">
-                <div className="row"><span className="mono">{formatDay(localDay(a.starts_at))}</span><span className="grow" /><StatusPill status={a.status} /></div>
+                <div className="row"><span className="mono">{formatDay(localDay(a.starts_at))}</span><span className="grow" /><StatusPill status={a.status} removed={a.removed_at} /></div>
                 <div className="small muted">{a.agenda?.name}{proceduresOf(a).length ? ` · ${proceduresOf(a).map((p) => p.name).join(', ')}` : ''}</div>
               </div>
             ))}

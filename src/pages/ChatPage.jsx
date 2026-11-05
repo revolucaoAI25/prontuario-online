@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Hash, MessagesSquare, Plus, Search, Send, Settings2, Trash2 } from 'lucide-react';
+import { Bell, BellOff, MessagesSquare, Plus, Search, Send, Settings2, Trash2 } from 'lucide-react';
 import { ChatGroupModal } from './ChatGroupModal.jsx';
 import { supabase, must } from '../lib/supabase.js';
 import { useInterval, useLoad } from '../lib/hooks.js';
@@ -8,23 +8,16 @@ import { useToast } from '../context/ToastContext.jsx';
 import { localTime } from '../lib/time.js';
 import { groupMessages, listTime, useStickToBottom } from '../lib/chat.js';
 import { playChime } from '../lib/sound.js';
+import { CHANNEL_SELECT, channelColor } from '../lib/channels.js';
 import { Empty } from '../components/ui.jsx';
 
-const LAST_CHANNEL = 'equipe.canal';
 const norm = (s) => String(s ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
 const firstName = (name) => String(name ?? '').replace(/^(Dra?\.?)\s+/i, '').split(' ')[0];
 
-function readLastChannel() {
-  try {
-    return localStorage.getItem(LAST_CHANNEL);
-  } catch {
-    return null;
-  }
-}
-
-// Internal team groups, one per agenda/sector plus Recepção.
+// Internal team groups, one per agenda/sector plus Recepção. It opens on no
+// group (like WhatsApp), so a notification is never "read" by accident.
 export function ChatPage() {
-  const { staff, isAdmin } = useAuth();
+  const { staff, isAdmin, setMute } = useAuth();
   const [managing, setManaging] = useState(null); // null | 'new' | channel
   const toast = useToast();
   const [channelId, setChannelId] = useState(null);
@@ -34,7 +27,7 @@ export function ChatPage() {
 
   const { data: channels = [], reload: reloadChannels } = useLoad(async () => {
     const [list, unread, recent] = await Promise.all([
-      must(supabase.from('chat_channels').select('*').order('name')),
+      must(supabase.from('chat_channels').select(CHANNEL_SELECT).order('name')),
       must(supabase.rpc('unread_counts')),
       must(supabase.from('chat_messages').select('channel_id, body, created_at, author_id, author:staff(full_name)').order('created_at', { ascending: false }).limit(300)),
     ]);
@@ -46,22 +39,9 @@ export function ChatPage() {
       .sort((a, b) => (b.last?.created_at ?? '').localeCompare(a.last?.created_at ?? '') || a.name.localeCompare(b.name));
   }, []);
 
-  // Open the last channel used, else one with unread messages, else the most recent.
-  useEffect(() => {
-    if (channelId || !channels.length) return;
-    const remembered = readLastChannel();
-    const pick = channels.find((c) => c.unread > 0) ?? channels.find((c) => c.id === remembered) ?? channels[0];
-    setChannelId(pick.id);
-  }, [channels, channelId]);
-
   function open(id) {
     setChannelId(id);
     setText('');
-    try {
-      localStorage.setItem(LAST_CHANNEL, id);
-    } catch {
-      // not remembered in private mode
-    }
   }
 
   const { data: messages = [], reload: reloadMessages } = useLoad(
@@ -79,7 +59,7 @@ export function ChatPage() {
   useEffect(() => {
     if (!channelId) return;
     const ids = new Set(messages.map((m) => m.id));
-    if (seen.current?.channel === channelId && messages.some((m) => !seen.current.ids.has(m.id) && m.author_id !== staff?.id)) playChime();
+    if (seen.current?.channel === channelId && !staff?.mute_chat && messages.some((m) => !seen.current.ids.has(m.id) && m.author_id !== staff?.id)) playChime();
     seen.current = { channel: channelId, ids };
   }, [messages, channelId, staff]);
   const thread = useStickToBottom(channelId, shown.length);
@@ -153,6 +133,10 @@ export function ChatPage() {
         <div className="card chat-list">
           <div className="chat-list-head row">
             <div className="search grow"><Search /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Buscar grupo" /></div>
+            <button type="button" className={`icon-btn ${staff?.mute_chat ? 'muted' : ''}`} onClick={() => setMute({ mute_chat: !staff?.mute_chat })}
+              title={staff?.mute_chat ? 'Som da equipe desligado (só para você). Clique para ligar.' : 'Silenciar o som da equipe (só para você)'} aria-label="Som da equipe">
+              {staff?.mute_chat ? <BellOff /> : <Bell />}
+            </button>
             {isAdmin && <button type="button" className="icon-btn" onClick={() => setManaging('new')} title="Novo grupo" aria-label="Novo grupo"><Plus /></button>}
           </div>
           <div className="chat-items">
@@ -161,12 +145,12 @@ export function ChatPage() {
               const who = c.last ? (c.last.author_id === staff?.id ? 'Você' : firstName(c.last.author?.full_name) || 'Equipe') : null;
               return (
                 <div key={c.id} className={`chat-item ${c.id === channelId ? 'active' : ''} ${unread ? 'has-unread' : ''}`} onClick={() => open(c.id)}>
-                  <span className="channel-icon"><Hash size={16} /></span>
+                  <span className="channel-dot" style={{ background: channelColor(c) }} />
                   <div className="grow" style={{ minWidth: 0 }}>
                     <div className="row"><span className="nm grow">{c.name}</span><span className="when">{listTime(c.last?.created_at)}</span></div>
                     <div className="row">
                       <span className="snip grow"><span>{c.last ? `${who}: ${c.last.body}` : 'Nenhuma mensagem'}</span></span>
-                      {unread > 0 && <span className="unread">{unread}</span>}
+                      {unread > 0 && <span className="bubble" style={{ background: channelColor(c) }}>{unread > 99 ? '99+' : unread}</span>}
                     </div>
                   </div>
                 </div>
@@ -178,7 +162,7 @@ export function ChatPage() {
           {current ? (
             <>
               <div className="chat-head">
-                <span className="channel-icon"><Hash size={16} /></span>
+                <span className="channel-dot" style={{ background: channelColor(current) }} />
                 <div className="grow">
                   <h3>{current.name}</h3>
                   <div className="small muted">{current.everyone ? 'Toda a equipe' : current.agenda_id ? 'Grupo da agenda' : 'Grupo da equipe'}</div>
@@ -220,7 +204,7 @@ export function ChatPage() {
                 <button type="button" className="btn btn-primary" onClick={send} disabled={!text.trim()} aria-label="Enviar"><Send /></button>
               </div>
             </>
-          ) : <Empty icon={MessagesSquare}>Nenhum grupo disponível.</Empty>}
+          ) : <Empty icon={MessagesSquare}>{channels.length ? 'Escolha uma conversa à esquerda.' : 'Nenhum grupo disponível.'}</Empty>}
         </div>
       </div>
       {managing && (

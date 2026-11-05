@@ -1,4 +1,5 @@
 import { addDays, localDay, localTime, weekday } from '../../lib/time.js';
+import { HOLDS_SLOT, displayStatus } from '../../lib/status.js';
 
 const WEEKDAYS = ['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb', 'Dom'];
 const MAX_ITEMS = 3;
@@ -34,7 +35,7 @@ export function MonthGrid({ month, appointments, agendaColor, onPickDay }) {
       <div className="month-grid">
         {monthDays(month).map((day) => {
           const list = (byDay.get(day) ?? []).sort((a, b) => new Date(a.starts_at) - new Date(b.starts_at));
-          const active = list.filter((a) => a.status !== 'cancelado');
+          const active = list.filter((a) => HOLDS_SLOT.has(a.status) && !a.removed_at);
           const dow = weekday(day);
           return (
             <div
@@ -48,7 +49,7 @@ export function MonthGrid({ month, appointments, agendaColor, onPickDay }) {
                 {active.length > 0 && <span className="mcount">{active.length}</span>}
               </div>
               {list.slice(0, MAX_ITEMS).map((a) => (
-                <div key={a.id} className={`month-item st-${a.status}`} title={`${localTime(a.starts_at)} · ${a.patient?.full_name}`}>
+                <div key={a.id} className={`month-item st-${a.removed_at ? 'removido' : displayStatus(a.status)}`} title={`${localTime(a.starts_at)} · ${a.patient?.full_name}`}>
                   <i style={{ background: agendaColor(a.agenda_id) }} />
                   <span className="tm">{localTime(a.starts_at)}</span>
                   <span className="nm">{shortName(a.patient?.full_name)}</span>

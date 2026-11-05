@@ -20,16 +20,20 @@ export function whatsappLink(phone) {
   return `https://wa.me/${d}`;
 }
 
+// What the clinic offers when recording a payment (04/11). "Pix" and
+// "Boleto" remain only to name older entries.
 export const PAYMENT_METHODS = [
-  { id: 'pix', label: 'Pix' },
-  { id: 'dinheiro', label: 'Dinheiro' },
+  { id: 'pix_everson', label: 'Pix Everson' },
+  { id: 'pix_simone', label: 'Pix Simone' },
+  { id: 'transferencia', label: 'TED' },
   { id: 'cartao_credito', label: 'Cartão de crédito' },
   { id: 'cartao_debito', label: 'Cartão de débito' },
-  { id: 'transferencia', label: 'Transferência' },
-  { id: 'boleto', label: 'Boleto' },
+  { id: 'dinheiro', label: 'Dinheiro' },
   { id: 'outro', label: 'Outro' },
 ];
-export const methodLabel = (id) => PAYMENT_METHODS.find((m) => m.id === id)?.label ?? '—';
+const OLD_METHODS = [{ id: 'pix', label: 'Pix' }, { id: 'boleto', label: 'Boleto' }];
+
+export const methodLabel = (id) => [...PAYMENT_METHODS, ...OLD_METHODS].find((m) => m.id === id)?.label ?? '—';
 
 export const ROLE_LABEL = { admin: 'Administrador', secretaria: 'Secretária', profissional: 'Profissional' };
 

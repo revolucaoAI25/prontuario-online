@@ -9,6 +9,9 @@ import { formatDay, localDay, zonedToUtc } from '../lib/time.js';
 
 const COUNTER = ''; // no agenda: a product sold at the front desk
 
+// Pix goes to Simone's account for her agenda, to Dr. Everson's otherwise.
+const pixFor = (agenda) => (/simone/i.test(agenda?.name ?? '') ? 'pix_simone' : 'pix_everson');
+
 // The patient's payments. Kept out of sight behind a "$" button so it is not
 // on screen while the patient is in the room. Each payment counts for an
 // agenda; the database hides the doctors' agendas from the rest of the team,
@@ -30,10 +33,14 @@ export function PaymentsPanel({ patientId, appointmentId, agendaId }) {
     return rows[0]?.agenda_id ?? COUNTER;
   }, [patientId, agendaId]);
 
-  const blank = { amount: '', method: 'pix', installments: 1, status: 'pago', occurred_on: localDay(), description: '', agenda_id: lastAgenda ?? COUNTER };
+  const blank = { amount: '', method: 'pix_everson', installments: 1, status: 'pago', occurred_on: localDay(), description: '', agenda_id: lastAgenda ?? COUNTER };
   const [form, setForm] = useState(blank);
-  useEffect(() => { if (!editingId && lastAgenda !== undefined) setForm((f) => ({ ...f, agenda_id: lastAgenda })); }, [lastAgenda]); // eslint-disable-line react-hooks/exhaustive-deps
-  const set = (key) => (e) => setForm((f) => ({ ...f, [key]: e.target.value }));
+  useEffect(() => { if (!editingId && lastAgenda !== undefined) setForm((f) => withAgenda(f, lastAgenda)); }, [lastAgenda, agendas.length]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Choosing an agenda moves a Pix to that agenda's account.
+  const withAgenda = (f, agendaId) => ({
+    ...f, agenda_id: agendaId, method: f.method?.startsWith('pix') ? pixFor(agendas.find((a) => a.id === agendaId)) : f.method,
+  });
+  const set = (key) => (e) => setForm((f) => (key === 'agenda_id' ? withAgenda(f, e.target.value) : { ...f, [key]: e.target.value }));
   const agendaName = (id) => agendas.find((a) => a.id === id)?.name;
 
   async function add() {
@@ -64,7 +71,7 @@ export function PaymentsPanel({ patientId, appointmentId, agendaId }) {
   function edit(p) {
     setEditingId(p.id);
     setForm({
-      amount: String(p.amount).replace('.', ','), method: p.method ?? 'pix', installments: p.installments, status: p.status,
+      amount: String(p.amount).replace('.', ','), method: p.method ?? pixFor(agendas.find((a) => a.id === p.agenda_id)), installments: p.installments, status: p.status,
       occurred_on: p.occurred_on, description: p.description ?? '', agenda_id: p.agenda_id ?? COUNTER,
     });
   }
@@ -79,7 +86,7 @@ export function PaymentsPanel({ patientId, appointmentId, agendaId }) {
   }
 
   async function markPaid(payment) {
-    const { error } = await supabase.from('payments').update({ status: 'pago', method: payment.method ?? 'pix', occurred_on: localDay() }).eq('id', payment.id);
+    const { error } = await supabase.from('payments').update({ status: 'pago', method: payment.method ?? pixFor(agendas.find((a) => a.id === payment.agenda_id)), occurred_on: localDay() }).eq('id', payment.id);
     if (error) return toast.error(error);
     reload();
   }
@@ -106,6 +113,7 @@ export function PaymentsPanel({ patientId, appointmentId, agendaId }) {
         <div className="field"><label>Forma de pagamento</label>
           <select className="select" value={form.method} onChange={set('method')}>
             {PAYMENT_METHODS.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
+            {form.method && !PAYMENT_METHODS.some((m) => m.id === form.method) && <option value={form.method}>{methodLabel(form.method)}</option>}
           </select>
         </div>
         <div className="field"><label>Parcelas</label><input className="input" type="number" min="1" max="24" value={form.installments} onChange={set('installments')} /></div>

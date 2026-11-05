@@ -111,6 +111,14 @@ create table stock_sectors (
 create unique index stock_sectors_name_idx on stock_sectors (normalize_text(btrim(name)));
 alter table stock_products add column sector_id uuid references stock_sectors (id) on delete set null;
 alter table stock_sectors enable row level security;
+create or replace view stock_levels with (security_invoker = true) as
+select p.id, p.name, p.unit, p.location, p.min_quantity, p.notes, p.active,
+       coalesce(sum(case when m.type = 'entrada' then m.quantity else -m.quantity end), 0) as quantity,
+       max(m.moved_at) as last_movement_at,
+       p.sector_id
+from stock_products p
+left join stock_movements m on m.product_id = p.id
+group by p.id;
 create policy stock_sectors_all on stock_sectors for all to authenticated using ((select is_staff())) with check ((select is_staff()));
 
 -- "Pessoal": the team and their vacations. Dr. Everson only.

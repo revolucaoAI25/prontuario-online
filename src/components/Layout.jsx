@@ -1,12 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
 import { NavLink, Outlet } from 'react-router-dom';
 import {
-  CalendarDays, Users, FileText, Wallet, Package, MessagesSquare, MessageCircle, BellRing, Settings, LogOut,
+  CalendarDays, Users, FileText, Wallet, Package, MessagesSquare, MessageCircle, BellRing, Settings, LogOut, ClipboardList, Contact,
 } from 'lucide-react';
 import { supabase } from '../lib/supabase.js';
 import { useAuth } from '../context/AuthContext.jsx';
 import { useInterval } from '../lib/hooks.js';
 import { installSoundUnlock, notify, playChime } from '../lib/sound.js';
+import { CHANNEL_SELECT, channelColor } from '../lib/channels.js';
+import { isMobileDevice } from '../lib/device.js';
 import { Avatar } from './ui.jsx';
 
 const NAV = [
@@ -17,23 +19,34 @@ const NAV = [
   { to: '/conversas', label: 'WhatsApp', icon: MessageCircle, badge: 'whatsapp' },
   { to: '/lembretes', label: 'Lembretes', icon: BellRing },
   { to: '/estoque', label: 'Estoque', icon: Package },
-  { to: '/financeiro', label: 'Financeiro', icon: Wallet, reception: true },
+  { to: '/administrativo', label: 'Administrativo', icon: ClipboardList, reception: true, badge: 'tasks' },
+  { to: '/financeiro', label: 'Financeiro', icon: Wallet, reception: true, desktop: true },
+  { to: '/pessoal', label: 'Pessoal', icon: Contact, admin: true },
   { to: '/configuracoes', label: 'Ajustes', icon: Settings, admin: true },
 ];
 
-// Unread internal-chat messages. Every new message from someone else chimes
-// (even with that group open) and, with the app in the background, shows a
-// system notification. Realtime when available, polling as a fallback.
-function useUnreadChat(staffId) {
-  const [unread, setUnread] = useState(0);
+// Unread internal-chat messages per group, with the group's color. Every new
+// message from someone else chimes (unless this person muted the team chat)
+// and, with the app in the background, shows a system notification.
+function useUnreadChat(staffId, muted) {
+  const [unread, setUnread] = useState([]);
   const last = useRef(null);
+  const mutedRef = useRef(muted);
+  mutedRef.current = muted;
 
   async function refresh() {
-    const { data } = await supabase.rpc('unread_counts');
-    const total = (data ?? []).reduce((sum, r) => sum + Number(r.unread), 0);
-    if (last.current !== null && total > last.current) playChime();
+    const [{ data: counts }, { data: channels }] = await Promise.all([
+      supabase.rpc('unread_counts'),
+      supabase.from('chat_channels').select(CHANNEL_SELECT),
+    ]);
+    const list = (counts ?? []).filter((r) => Number(r.unread) > 0).map((r) => {
+      const channel = (channels ?? []).find((c) => c.id === r.channel_id);
+      return { id: r.channel_id, count: Number(r.unread), color: channelColor(channel), name: channel?.name };
+    });
+    const total = list.reduce((sum, r) => sum + r.count, 0);
+    if (last.current !== null && total > last.current && !mutedRef.current) playChime();
     last.current = total;
-    setUnread(total);
+    setUnread(list);
   }
 
   useEffect(() => {
@@ -41,7 +54,7 @@ function useUnreadChat(staffId) {
     const channel = supabase
       .channel('chat-unread')
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'chat_messages' }, ({ new: m }) => {
-        if (m?.author_id && m.author_id !== staffId) {
+        if (m?.author_id && m.author_id !== staffId && !mutedRef.current) {
           playChime();
           notify('Nova mensagem da equipe', m.body, () => { window.location.assign('/comunicacao'); });
         }
@@ -59,15 +72,17 @@ function useUnreadChat(staffId) {
 }
 
 // Patient messages nobody on the team has opened yet (shared inbox), with the
-// same chime when new ones arrive.
-function useUnreadWhatsApp() {
+// same chime when new ones arrive, unless this person muted WhatsApp.
+function useUnreadWhatsApp(muted) {
   const [unread, setUnread] = useState(0);
   const last = useRef(null);
+  const mutedRef = useRef(muted);
+  mutedRef.current = muted;
 
   async function refresh() {
     const { data } = await supabase.from('whatsapp_conversations').select('unread_count').gt('unread_count', 0);
     const total = (data ?? []).reduce((sum, r) => sum + Number(r.unread_count), 0);
-    if (last.current !== null && total > last.current) playChime();
+    if (last.current !== null && total > last.current && !mutedRef.current) playChime();
     last.current = total;
     setUnread(total);
   }
@@ -77,7 +92,7 @@ function useUnreadWhatsApp() {
     const channel = supabase
       .channel('whatsapp-unread')
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'whatsapp_messages' }, ({ new: m }) => {
-        if (m && !m.from_me) {
+        if (m && !m.from_me && !mutedRef.current) {
           playChime();
           notify(`WhatsApp · ${m.push_name ?? 'paciente'}`, m.body ?? 'Nova mensagem', () => { window.location.assign('/conversas'); });
         }
@@ -95,10 +110,54 @@ function useUnreadWhatsApp() {
   return unread;
 }
 
+// Administrativo: tasks whose reminder time has come. Each one alerts once per
+// computer (sound and notification); the count stays on the menu until done.
+function useDueTasks(enabled) {
+  const [due, setDue] = useState(0);
+
+  async function refresh() {
+    if (!enabled) return;
+    const { data } = await supabase.from('admin_tasks').select('id, title').is('done_at', null).lte('remind_at', new Date().toISOString());
+    const list = data ?? [];
+    setDue(list.length);
+    let seen;
+    try { seen = new Set(JSON.parse(localStorage.getItem('tarefas.avisadas') ?? '[]')); } catch { seen = new Set(); }
+    const fresh = list.filter((t) => !seen.has(t.id));
+    if (fresh.length) {
+      playChime();
+      notify('Lembrete', fresh.map((t) => t.title).join(' · '), () => { window.location.assign('/administrativo'); });
+      try { localStorage.setItem('tarefas.avisadas', JSON.stringify([...seen, ...fresh.map((t) => t.id)].slice(-300))); } catch { /* alerts again */ }
+    }
+  }
+
+  useEffect(() => {
+    refresh();
+    window.addEventListener('tasks-changed', refresh);
+    return () => window.removeEventListener('tasks-changed', refresh);
+  }, [enabled]); // eslint-disable-line react-hooks/exhaustive-deps
+  useInterval(refresh, 60000);
+  return due;
+}
+
+// Unread bubbles: one per group with news, in the group's color, slightly
+// overlapping (big enough to see from across the room).
+function ChatBubbles({ list }) {
+  if (list.length === 0) return null;
+  const shown = list.slice(0, 3);
+  return (
+    <span className="bubbles" title={list.map((c) => `${c.name}: ${c.count}`).join(' · ')}>
+      {shown.map((c) => <span key={c.id} className="bubble" style={{ background: c.color }}>{c.count > 99 ? '99+' : c.count}</span>)}
+    </span>
+  );
+}
+
 export function Layout() {
   const { staff, isAdmin, isReception, signOut } = useAuth();
-  const unread = { chat: useUnreadChat(staff?.id), whatsapp: useUnreadWhatsApp() };
+  const chat = useUnreadChat(staff?.id, staff?.mute_chat);
+  const unread = { whatsapp: useUnreadWhatsApp(staff?.mute_whatsapp), tasks: useDueTasks(isReception) };
+  const mobile = isMobileDevice();
   useEffect(() => { installSoundUnlock(); }, []);
+  const visible = (item) => (item.admin ? isAdmin : item.reception ? isReception : true) && !(item.desktop && mobile);
   return (
     <div className="app">
       <aside className="rail">
@@ -106,11 +165,14 @@ export function Layout() {
           <img src="/brand/logo-mark.png" alt="Everson Rezeck" />
         </NavLink>
         <nav className="rail-nav">
-          {NAV.filter((item) => (item.admin ? isAdmin : item.reception ? isReception : true)).map(({ to, label, icon: Icon, badge }) => (
+          {NAV.filter(visible).map(({ to, label, icon: Icon, badge }) => (
             <NavLink key={to} to={to} className={({ isActive }) => `rail-btn ${isActive ? 'active' : ''}`}>
               <Icon />
               <span className="label">{label}</span>
-              {badge && unread[badge] > 0 && <span className="badge">{unread[badge] > 99 ? '99+' : unread[badge]}</span>}
+              {badge === 'chat' && <ChatBubbles list={chat} />}
+              {badge && badge !== 'chat' && unread[badge] > 0 && (
+                <span className={`bubbles single ${badge}`}><span className="bubble">{unread[badge] > 99 ? '99+' : unread[badge]}</span></span>
+              )}
             </NavLink>
           ))}
         </nav>

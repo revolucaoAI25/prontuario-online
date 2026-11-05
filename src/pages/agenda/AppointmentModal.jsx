@@ -5,7 +5,7 @@ import { Modal, Field } from '../../components/ui.jsx';
 import { PatientPicker, ensurePatient } from '../../components/PatientPicker.jsx';
 import { ProcedurePicker } from '../../components/ProcedurePicker.jsx';
 import { minutesToTime, timeToMinutes, zonedToUtc } from '../../lib/time.js';
-import { activeTypes, defaultEndMinutes, defaultType, findOverlaps, setAppointmentProcedures } from './agendaData.js';
+import { activeTypes, defaultEndMinutes, defaultType, findOverlaps, setAppointmentProcedures, typeLabel } from './agendaData.js';
 
 // New booking from the screen. Unlike the API, it may overlap other bookings
 // (encaixe) after a confirmation.
@@ -97,7 +97,7 @@ export function AppointmentModal({ agendas, prefill, onClose, onSaved }) {
         </Field>
         <Field label="Tipo">
           <select className="select" value={typeId} onChange={(e) => { setTypeId(e.target.value); setEndTouched(false); }}>
-            {activeTypes(agenda).map((t) => <option key={t.id} value={t.id}>{t.name} ({t.duration_minutes} min)</option>)}
+            {activeTypes(agenda).map((t) => <option key={t.id} value={t.id}>{typeLabel(t)}</option>)}
           </select>
         </Field>
         <Field label="Data"><input className="input" type="date" value={day} onChange={(e) => setDay(e.target.value)} /></Field>

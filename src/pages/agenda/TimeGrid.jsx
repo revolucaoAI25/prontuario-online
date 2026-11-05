@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { displayStatus } from '../../lib/status.js';
 import { localDay, localMinutes, minutesToTime } from '../../lib/time.js';
 import { useInterval } from '../../lib/hooks.js';
 import { fixedTimes, openWindows, proceduresOf } from './agendaData.js';
 
-const PX = 1.5; // pixels per minute
+const PX = 2; // pixels per minute: a 20-minute visit fits time, name and procedure
 const SNAP = 5; // minutes
 const TIME_COL = 60;
+const HOLD_MS = 400; // on a touch screen, hold a booking this long to move it
 
 function minutesOf(appt) {
   const start = localMinutes(appt.starts_at);
@@ -65,6 +67,14 @@ export function TimeGrid({ columns, appointments, blocks, agendaColor, onOpen, o
   const bodyRef = useRef(null);
   const dragRef = useRef(null);
   const [drag, setDrag] = useState(null);
+  const [held, setHeld] = useState(null);
+
+  // While a booking is held on a touch screen, the page must not scroll.
+  useEffect(() => {
+    const stop = (e) => { if (dragRef.current?.armed && e.cancelable) e.preventDefault(); };
+    document.addEventListener('touchmove', stop, { passive: false });
+    return () => document.removeEventListener('touchmove', stop);
+  }, []);
   const [now, setNow] = useState(() => localMinutes(new Date()));
   useInterval(() => setNow(localMinutes(new Date())), 60000);
   const today = localDay();
@@ -124,11 +134,34 @@ export function TimeGrid({ columns, appointments, blocks, agendaColor, onOpen, o
     onCreate({ day: column.day, agendaId: column.agendas.length === 1 ? column.agendas[0].id : null, minutes: slot ?? Math.floor(minute / SNAP) * SNAP });
   }
 
+  // Mouse: drag right away. Touch: a quick touch opens the booking and a
+  // swipe scrolls the agenda; only holding it still for a moment picks it up.
   function pointerDown(event, item, mode) {
     if (event.button !== 0) return;
     event.stopPropagation();
-    event.currentTarget.setPointerCapture(event.pointerId);
-    dragRef.current = { item, mode, x: event.clientX, y: event.clientY, moved: false };
+    const target = event.currentTarget;
+    const d = { item, mode, x: event.clientX, y: event.clientY, moved: false, armed: event.pointerType !== 'touch' };
+    dragRef.current = d;
+    if (d.armed) {
+      target.setPointerCapture(event.pointerId);
+      return;
+    }
+    const { pointerId } = event;
+    d.timer = setTimeout(() => {
+      if (dragRef.current !== d) return;
+      d.armed = true;
+      try { target.setPointerCapture(pointerId); } catch { /* the finger already left */ }
+      setHeld(item.id);
+      navigator.vibrate?.(15);
+    }, HOLD_MS);
+  }
+
+  function pointerCancel() {
+    const d = dragRef.current;
+    if (d?.timer) clearTimeout(d.timer);
+    dragRef.current = null;
+    setHeld(null);
+    setDrag(null);
   }
 
   function pointerMove(event) {
@@ -136,6 +169,11 @@ export function TimeGrid({ columns, appointments, blocks, agendaColor, onOpen, o
     if (!d) return;
     const dx = event.clientX - d.x;
     const dy = event.clientY - d.y;
+    if (!d.armed) {
+      // the finger moved before the hold: it is a scroll, not a drag
+      if (Math.abs(dx) > 8 || Math.abs(dy) > 8) pointerCancel();
+      return;
+    }
     if (!d.moved && Math.abs(dx) < 4 && Math.abs(dy) < 4) return;
     d.moved = true;
     const delta = Math.round(dy / PX / SNAP) * SNAP;
@@ -158,7 +196,9 @@ export function TimeGrid({ columns, appointments, blocks, agendaColor, onOpen, o
   function pointerUp() {
     const d = dragRef.current;
     dragRef.current = null;
+    setHeld(null);
     if (!d) return;
+    if (d.timer) clearTimeout(d.timer);
     if (!d.moved) {
       onOpen(d.item.appt);
       return;
@@ -172,8 +212,12 @@ export function TimeGrid({ columns, appointments, blocks, agendaColor, onOpen, o
     }
   }
 
+  // One agenda on one day: the lines and labels follow its own start times
+  // (FastClinic's 12:15, 16:10...). Otherwise every 30 minutes.
+  const exact = columns.length === 1 && columns[0].agendas.length === 1 ? fixedTimes(columns[0].agendas[0], columns[0].day) : [];
   const marks = [];
-  for (let m = rangeStart; m <= rangeEnd; m += 30) marks.push(m);
+  if (exact.length) marks.push(...exact.filter((m) => m >= rangeStart && m <= rangeEnd));
+  else for (let m = rangeStart; m <= rangeEnd; m += 30) marks.push(m);
 
   return (
     <div className="grid" style={{ gridTemplateColumns: template }}>
@@ -191,8 +235,8 @@ export function TimeGrid({ columns, appointments, blocks, agendaColor, onOpen, o
       </div>
       <div ref={bodyRef} className="grid-body" style={{ gridColumn: '1 / -1', gridTemplateColumns: template, height }}>
         <div className="time-col">
-          {marks.filter((m) => m % 60 === 0 && m > rangeStart).map((m) => (
-            <span key={m} className="time-label" style={{ top: y(m) }}>{minutesToTime(m)}</span>
+          {marks.filter((m) => m > rangeStart).map((m) => (
+            <span key={m} className={`time-label ${!exact.length && m % 60 ? 'half' : ''}`} style={{ top: y(m) }}>{minutesToTime(m)}</span>
           ))}
         </div>
         {columns.map((column, col) => {
@@ -208,8 +252,8 @@ export function TimeGrid({ columns, appointments, blocks, agendaColor, onOpen, o
               {unionWindows(column.agendas, column.day).map(([s, e]) => (
                 <div key={`${s}-${e}`} className="open" style={{ top: y(s), height: (e - s) * PX }} />
               ))}
-              {marks.map((m) => <div key={m} className={m % 60 === 0 ? 'hourline' : 'halfline'} style={{ top: y(m) }} />)}
-              {fixed.map((m) => <div key={`f${m}`} className="fixed-slot" style={{ top: y(m) }} title={minutesToTime(m)} />)}
+              {marks.map((m) => <div key={m} className={exact.length || m % 60 === 0 ? 'hourline' : 'halfline'} style={{ top: y(m) }} />)}
+              {!exact.length && fixed.map((m) => <div key={`f${m}`} className="fixed-slot" style={{ top: y(m) }} title={minutesToTime(m)} />)}
               {colBlocks.map((b) => {
                 const s = Math.max(localDay(b.starts_at) === column.day ? localMinutes(b.starts_at) : 0, rangeStart);
                 const e = Math.min(localDay(b.ends_at) === column.day ? localMinutes(b.ends_at) : 24 * 60, rangeEnd);
@@ -226,7 +270,8 @@ export function TimeGrid({ columns, appointments, blocks, agendaColor, onOpen, o
                 const { appt } = item;
                 const lane = lanes.get(item.id);
                 const h = Math.max((item.end - item.start) * PX, 18);
-                const compact = h < 36;
+                const compact = h < 30;
+                const short = !compact && h < 56; // time and name share the first line
                 // several bookings side by side in a narrow column: names only
                 const narrow = lane.lanes > 2 || (lane.lanes > 1 && columns.length > 4);
                 const procs = proceduresOf(appt).map((p) => p.name).join(', ');
@@ -234,7 +279,7 @@ export function TimeGrid({ columns, appointments, blocks, agendaColor, onOpen, o
                 return (
                   <div
                     key={appt.id}
-                    className={`appt st-${appt.status} ${compact ? 'compact' : ''} ${narrow ? 'narrow' : ''} ${drag?.id === appt.id ? 'dragging' : ''}`}
+                    className={`appt st-${appt.removed_at ? 'removido' : displayStatus(appt.status)} ${compact ? 'compact' : ''} ${short ? 'short' : ''} ${narrow ? 'narrow' : ''} ${drag?.id === appt.id ? 'dragging' : ''} ${held === appt.id ? 'held' : ''}`}
                     style={{
                       top: y(item.start),
                       height: h - 2,
@@ -245,12 +290,15 @@ export function TimeGrid({ columns, appointments, blocks, agendaColor, onOpen, o
                     onPointerDown={(e) => pointerDown(e, item, 'move')}
                     onPointerMove={pointerMove}
                     onPointerUp={pointerUp}
+                    onPointerCancel={pointerCancel}
                     data-testid="appointment"
                   >
-                    <div className="t">{dot && <i style={{ background: dot }} />}{minutesToTime(item.start)}{compact || narrow ? '' : `–${minutesToTime(item.end)}`}</div>
-                    <div className="n">{narrow ? shortName(appt.patient?.full_name) : appt.patient?.full_name}</div>
-                    {!compact && !narrow && h > 52 && procs && <div className="p">{procs}</div>}
-                    <div className="resize" onPointerDown={(e) => pointerDown(e, item, 'resize')} onPointerMove={pointerMove} onPointerUp={pointerUp} />
+                    <div className="head">
+                      <span className="t">{dot && <i style={{ background: dot }} />}{minutesToTime(item.start)}{compact || short || narrow ? '' : `–${minutesToTime(item.end)}`}</span>
+                      <span className="n">{narrow ? shortName(appt.patient?.full_name) : appt.patient?.full_name}</span>
+                    </div>
+                    {!compact && procs && <div className="p">{procs}</div>}
+                    <div className="resize" onPointerDown={(e) => pointerDown(e, item, 'resize')} onPointerMove={pointerMove} onPointerUp={pointerUp} onPointerCancel={pointerCancel} />
                   </div>
                 );
               })}

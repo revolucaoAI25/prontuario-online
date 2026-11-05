@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import {
-  AlertCircle, Check, CheckCheck, Clock, Download, FileText, MessageCircle, Mic, MessageCirclePlus, Paperclip, QrCode, RotateCw, Search, Send, Square, Trash2, X,
+  AlertCircle, Bell, BellOff, Check, CheckCheck, Clock, Download, FileText, MessageCircle, Mic, MessageCirclePlus, Paperclip, QrCode, RotateCw, Search, Send, Square, Trash2, X,
 } from 'lucide-react';
 import { supabase, must, callApi } from '../lib/supabase.js';
 import { useInterval, useLoad } from '../lib/hooks.js';
 import { localTime } from '../lib/time.js';
 import { groupMessages, listTime, useStickToBottom } from '../lib/chat.js';
 import { useToast } from '../context/ToastContext.jsx';
+import { useAuth } from '../context/AuthContext.jsx';
 import { Avatar, Empty, Modal } from '../components/ui.jsx';
 import { WhatsAppConnection } from '../components/WhatsAppConnection.jsx';
 import { PatientPicker } from '../components/PatientPicker.jsx';
@@ -161,6 +162,7 @@ const kindOfFile = (file) => (/^image\//.test(file.type) ? 'imagem' : /^video\//
 
 export function ConversationsPage() {
   const toast = useToast();
+  const { staff, setMute } = useAuth();
   const [jid, setJid] = useState(null);
   // a conversation started from a patient that has no messages yet
   const [draft, setDraft] = useState(null);
@@ -371,6 +373,11 @@ export function ConversationsPage() {
               <span className="dot" /> {connected ? 'Conectado' : 'Desconectado'}
             </button>
           )}
+          {/* Every computer is logged in: each person can silence it for themselves. */}
+          <button type="button" className={`btn ${staff?.mute_whatsapp ? 'muted' : ''}`} onClick={() => setMute({ mute_whatsapp: !staff?.mute_whatsapp })}
+            title={staff?.mute_whatsapp ? 'O som do WhatsApp está desligado só para você' : 'Desligar o som das mensagens só para você'}>
+            {staff?.mute_whatsapp ? <><BellOff /> Som desligado</> : <><Bell /> Som ligado</>}
+          </button>
           <button type="button" className="btn btn-primary" onClick={() => setPicking((v) => !v)}><MessageCirclePlus /> Nova conversa</button>
         </div>
       </header>

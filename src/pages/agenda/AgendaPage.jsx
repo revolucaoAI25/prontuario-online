@@ -4,7 +4,7 @@ import { supabase } from '../../lib/supabase.js';
 import { useLoad, useInterval } from '../../lib/hooks.js';
 import { useToast } from '../../context/ToastContext.jsx';
 import { useAuth } from '../../context/AuthContext.jsx';
-import { STATUSES } from '../../lib/status.js';
+import { HOLDS_SLOT, STATUSES, displayStatus } from '../../lib/status.js';
 import { StatusPill, Empty } from '../../components/ui.jsx';
 import {
   addDays, formatDay, formatFullDate, formatWeekday, localDay, localTime, minutesToTime, relativeDayLabel, weekday, zonedToUtc,
@@ -68,7 +68,7 @@ export function AgendaPage() {
   const [day, setDay] = useState(localDay());
   const [view, setViewState] = useState(() => remembered('agenda.view', 'dia'));
   const [asList, setAsList] = useState(false);
-  const [showCancelled, setShowCancelled] = useState(false);
+  const [showRemoved, setShowRemoved] = useState(false);
   const [selected, setSelected] = useState(() => remembered('agenda.selected', null));
   const [openId, setOpenId] = useState(null);
   const [creating, setCreating] = useState(null);
@@ -99,26 +99,29 @@ export function AgendaPage() {
   const visibleAgendas = agendas.filter((a) => (selected ?? []).includes(a.id));
   const visibleIds = new Set(visibleAgendas.map((a) => a.id));
   const appointments = useMemo(
-    () => (range?.appointments ?? []).filter((a) => (showCancelled || a.status !== 'cancelado') && (selected ?? []).includes(a.agenda_id)),
-    [range, showCancelled, selected],
+    () => (range?.appointments ?? []).filter((a) => (showRemoved || !a.removed_at) && (selected ?? []).includes(a.agenda_id)),
+    [range, showRemoved, selected],
   );
   const openAppointment = range?.appointments.find((a) => a.id === openId) ?? null;
   const agendaColor = (id) => agendas.find((a) => a.id === id)?.color ?? '#999';
-  const activeCount = appointments.filter((a) => a.status !== 'cancelado').length;
+  // Bookings that hold their time (not "a remarcar" nor removed).
+  const counts = (a) => HOLDS_SLOT.has(a.status) && !a.removed_at;
+  const activeCount = appointments.filter(counts).length;
 
   function toggleAgenda(id) {
     setSelected((cur) => (cur.includes(id) ? cur.filter((x) => x !== id) : agendas.map((a) => a.id).filter((x) => x === id || cur.includes(x))));
   }
 
   async function moveAppointment(appt, { day: targetDay, agendaId, startMin, endMin }) {
-    const before = { agenda_id: appt.agenda_id, starts_at: appt.starts_at, ends_at: appt.ends_at, appointment_type_id: appt.appointment_type_id, status: appt.status };
+    const before = { agenda_id: appt.agenda_id, starts_at: appt.starts_at, ends_at: appt.ends_at, appointment_type_id: appt.appointment_type_id, status: appt.status, cancel_reason: appt.cancel_reason };
     const changes = {
       agenda_id: agendaId,
       starts_at: zonedToUtc(targetDay, minutesToTime(startMin)).toISOString(),
       ends_at: zonedToUtc(targetDay, minutesToTime(endMin)).toISOString(),
     };
     if (agendaId !== appt.agenda_id) changes.appointment_type_id = defaultType(agendas.find((a) => a.id === agendaId))?.id ?? null;
-    if (appt.status === 'pediu_remarcar') changes.status = 'agendado';
+    // Moving a booking "a remarcar" to a new time is rescheduling it.
+    if (displayStatus(appt.status) === 'remarcar') Object.assign(changes, { status: 'agendado', cancel_reason: null });
     const { error } = await supabase.from('appointments').update(changes).eq('id', appt.id);
     if (error) return toast.error(error);
     reload();
@@ -173,7 +176,7 @@ export function AgendaPage() {
 
   const columns = view === 'semana'
     ? weekDays.map((d) => {
-      const count = appointments.filter((a) => localDay(a.starts_at) === d && a.status !== 'cancelado').length;
+      const count = appointments.filter((a) => localDay(a.starts_at) === d && counts(a)).length;
       return {
         key: d,
         day: d,
@@ -188,7 +191,7 @@ export function AgendaPage() {
       };
     })
     : visibleAgendas.map((agenda) => {
-      const count = appointments.filter((a) => a.agenda_id === agenda.id && a.status !== 'cancelado').length;
+      const count = appointments.filter((a) => a.agenda_id === agenda.id && counts(a)).length;
       return {
         key: agenda.id,
         day,
@@ -254,12 +257,13 @@ export function AgendaPage() {
       </div>
 
       <div className="legend">
-        {STATUSES.filter((s) => showCancelled || s.id !== 'cancelado').map((s) => (
+        {STATUSES.map((s) => (
           <span key={s.id} className={`legend-item st-${s.id}`}><span className="dot" />{s.legend}</span>
         ))}
+        <span className="legend-item unavailable"><span className="dot" />Indisponível</span>
         <span className="grow" />
         {view === 'semana' && !asList && visibleAgendas.length > 2 && <span className="week-hint">Dica: marque uma só agenda para ver mais detalhes</span>}
-        <label className="check small"><input type="checkbox" checked={showCancelled} onChange={(e) => setShowCancelled(e.target.checked)} /> Mostrar cancelados</label>
+        <label className="check small"><input type="checkbox" checked={showRemoved} onChange={(e) => setShowRemoved(e.target.checked)} /> Mostrar removidos</label>
       </div>
 
       <div className="card agenda-scroll" key={`${view}-${asList}`}>
@@ -283,7 +287,7 @@ export function AgendaPage() {
                   <td style={{ fontWeight: 600 }}>{a.patient?.full_name}</td>
                   <td><span className="row" style={{ gap: 7 }}><i style={{ width: 8, height: 8, borderRadius: 99, background: agendaColor(a.agenda_id), display: 'inline-block' }} />{agendas.find((g) => g.id === a.agenda_id)?.name}</span></td>
                   <td className="small muted">{proceduresOf(a).map((p) => p.name).join(', ')}</td>
-                  <td><StatusPill status={a.status} /></td>
+                  <td><StatusPill status={a.status} removed={a.removed_at} /></td>
                 </tr>
               ))}
             </tbody>

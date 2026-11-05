@@ -3,8 +3,11 @@ import { addDays, timeToMinutes, weekday, zonedToUtc } from '../../lib/time.js';
 
 export const APPOINTMENT_SELECT = `*,
   patient:patients(id, full_name, phone, birth_date),
-  type:appointment_types(id, name, duration_minutes),
+  type:appointment_types(id, name, display_name, duration_minutes),
   appointment_procedures(procedure:procedures(id, name, reminder_months))`;
+
+// What the clinic sees for a type: "Retorno" for the API's "Avaliação estética".
+export const typeLabel = (type) => type?.display_name || type?.name || '';
 
 export const proceduresOf = (appointment) => (appointment.appointment_procedures ?? []).map((ap) => ap.procedure).filter(Boolean);
 

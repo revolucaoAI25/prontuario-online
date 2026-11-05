@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Ban, CircleDollarSign, FileText, MessageCircle, Trash2 } from 'lucide-react';
+import { ArrowLeft, CalendarX2, CircleDollarSign, FileText, MessageCircle, Trash2 } from 'lucide-react';
 import { supabase, must } from '../../lib/supabase.js';
 import { useLoad } from '../../lib/hooks.js';
 import { useToast } from '../../context/ToastContext.jsx';
@@ -8,10 +8,10 @@ import { useAuth } from '../../context/AuthContext.jsx';
 import { Avatar, Field, StatusPill } from '../../components/ui.jsx';
 import { ProcedurePicker } from '../../components/ProcedurePicker.jsx';
 import { PaymentsPanel } from '../../components/PaymentsPanel.jsx';
-import { STATUSES } from '../../lib/status.js';
+import { STATUSES, displayStatus } from '../../lib/status.js';
 import { whatsappLink } from '../../lib/format.js';
 import { ageFrom, formatDay, formatDayLong, localDay, localTime, timeToMinutes, zonedToUtc } from '../../lib/time.js';
-import { APPOINTMENT_SELECT, activeTypes, findOverlaps, proceduresOf, setAppointmentProcedures } from './agendaData.js';
+import { APPOINTMENT_SELECT, activeTypes, findOverlaps, proceduresOf, setAppointmentProcedures, typeLabel } from './agendaData.js';
 
 // The patient around this booking: latest record notes and other visits.
 function usePatientContext(patientId) {
@@ -94,7 +94,7 @@ export function AppointmentSheet({ appointment, agendas, onClose, onChanged }) {
         starts_at: startsAt,
         ends_at: endsAt,
         notes: form.notes.trim() || null,
-        ...(moved && appointment.status === 'pediu_remarcar' ? { status: 'agendado' } : {}),
+        ...(moved && displayStatus(appointment.status) === 'remarcar' ? { status: 'agendado', cancel_reason: null } : {}),
       }).eq('id', appointment.id);
       if (error) throw error;
       await setAppointmentProcedures(appointment.id, form.procedures);
@@ -121,7 +121,7 @@ export function AppointmentSheet({ appointment, agendas, onClose, onChanged }) {
   const wa = whatsappLink(patient?.phone);
   const now = new Date();
   const others = (context?.visits ?? []).filter((v) => v.id !== appointment.id);
-  const upcoming = others.filter((v) => new Date(v.starts_at) > now && v.status !== 'cancelado').reverse().slice(0, 4);
+  const upcoming = others.filter((v) => new Date(v.starts_at) > now && !v.removed_at).reverse().slice(0, 4);
   const past = others.filter((v) => new Date(v.starts_at) <= now).slice(0, 5);
 
   return (
@@ -145,27 +145,31 @@ export function AppointmentSheet({ appointment, agendas, onClose, onChanged }) {
           <div className="row-wrap" style={{ marginBottom: 16 }}>
             <span className="pill">{formatDayLong(localDay(appointment.starts_at))} · {localTime(appointment.starts_at)}–{localTime(appointment.ends_at)}</span>
             <span className="pill"><i className="dot-sw" style={{ background: agendas.find((a) => a.id === appointment.agenda_id)?.color }} />{agendas.find((a) => a.id === appointment.agenda_id)?.name}</span>
-            <StatusPill status={appointment.status} />
+            <StatusPill status={appointment.status} removed={appointment.removed_at} />
           </div>
 
-          {appointment.status !== 'chegou' && appointment.status !== 'cancelado' && (
+          {appointment.status !== 'chegou' && !appointment.removed_at && (
             <button type="button" className="btn btn-primary btn-lg" style={{ width: '100%', marginBottom: 16 }} onClick={() => setStatus('chegou')}>
               Paciente chegou
             </button>
           )}
-          <div className="section-title">Status</div>
-          <div className="status-grid wide" style={{ marginBottom: 20 }}>
-            {STATUSES.filter((s) => s.id !== 'cancelado').map((s) => (
-              <button key={s.id} type="button" className={`status-btn st-${s.id} ${appointment.status === s.id ? 'sel' : ''}`} onClick={() => setStatus(s.id)}>
-                <span className="dot" />{s.label}
-              </button>
-            ))}
-          </div>
-          {appointment.status === 'cancelado' && (
+          {appointment.removed_at ? (
             <div className="banner row" style={{ marginBottom: 16 }}>
-              <span className="grow">Cancelado{appointment.cancel_reason ? `: ${appointment.cancel_reason}` : ''}.</span>
-              <button type="button" className="btn btn-sm" onClick={() => setStatus('agendado', { cancel_reason: null })}>Reativar</button>
+              <span className="grow">Removido da agenda{appointment.cancel_reason ? `: ${appointment.cancel_reason}` : ''}.</span>
+              <button type="button" className="btn btn-sm" onClick={() => setStatus('agendado', { removed_at: null, cancel_reason: null })}>Voltar para a agenda</button>
             </div>
+          ) : (
+            <>
+              <div className="section-title">Status</div>
+              <div className="status-grid wide" style={{ marginBottom: 20 }}>
+                {STATUSES.map((s) => (
+                  <button key={s.id} type="button" className={`status-btn st-${s.id} ${displayStatus(appointment.status) === s.id ? 'sel' : ''}`}
+                    onClick={() => displayStatus(appointment.status) !== s.id && setStatus(s.code, s.id === 'remarcar' ? {} : { cancel_reason: null })}>
+                    <span className="dot" />{s.label}
+                  </button>
+                ))}
+              </div>
+            </>
           )}
 
           <div className="section-title">Detalhes</div>
@@ -178,7 +182,7 @@ export function AppointmentSheet({ appointment, agendas, onClose, onChanged }) {
             <Field label="Tipo">
               <select className="select" value={form.appointment_type_id} onChange={(e) => setForm({ ...form, appointment_type_id: e.target.value })}>
                 <option value="">—</option>
-                {activeTypes(agenda).map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+                {activeTypes(agenda).map((t) => <option key={t.id} value={t.id}>{typeLabel(t)}</option>)}
               </select>
             </Field>
             <Field label="Data"><input className="input" type="date" value={form.day} onChange={(e) => setForm({ ...form, day: e.target.value })} /></Field>
@@ -195,8 +199,8 @@ export function AppointmentSheet({ appointment, agendas, onClose, onChanged }) {
           </div>
 
           <div className="sheet-actions">
-            {appointment.status !== 'cancelado' && appointment.status !== 'chegou' && !cancelling && (
-              <button type="button" className="btn btn-danger" onClick={() => setCancelling(true)}><Ban /> Cancelar agendamento</button>
+            {!appointment.removed_at && appointment.status !== 'chegou' && !cancelling && (
+              <button type="button" className="btn btn-danger" onClick={() => setCancelling(true)}><CalendarX2 /> Remover da agenda</button>
             )}
             {isAdmin && <button type="button" className="btn btn-ghost" style={{ color: 'var(--danger)' }} onClick={remove}><Trash2 /> Apagar</button>}
             <span className="grow" />
@@ -206,10 +210,11 @@ export function AppointmentSheet({ appointment, agendas, onClose, onChanged }) {
 
           {cancelling && (
             <div className="card card-pad" style={{ marginTop: 14, background: 'var(--surface-2)' }}>
-              <Field label="Motivo do cancelamento (opcional)"><input className="input" autoFocus value={reason} onChange={(e) => setReason(e.target.value)} /></Field>
+              <div className="small muted" style={{ marginBottom: 8 }}>Para quem desistiu e não vai remarcar. Some da agenda e libera o horário; o histórico continua no prontuário.</div>
+              <Field label="Motivo (opcional)"><input className="input" autoFocus value={reason} onChange={(e) => setReason(e.target.value)} /></Field>
               <div className="row">
                 <button type="button" className="btn" onClick={() => setCancelling(false)}>Voltar</button>
-                <button type="button" className="btn btn-danger" onClick={() => setStatus('cancelado', { cancel_reason: reason.trim() || null })}>Confirmar cancelamento</button>
+                <button type="button" className="btn btn-danger" onClick={() => setStatus('cancelado', { removed_at: new Date().toISOString(), cancel_reason: reason.trim() || null })}>Remover da agenda</button>
               </div>
             </div>
           )}
@@ -237,7 +242,7 @@ export function AppointmentSheet({ appointment, agendas, onClose, onChanged }) {
             {upcoming.length === 0 && <div className="small muted">Nenhum.</div>}
             {upcoming.map((v) => (
               <div key={v.id} className="side-item">
-                <div className="row"><b className="tnum">{formatDay(localDay(v.starts_at))} {localTime(v.starts_at)}</b><span className="grow" /><StatusPill status={v.status} /></div>
+                <div className="row"><b className="tnum">{formatDay(localDay(v.starts_at))} {localTime(v.starts_at)}</b><span className="grow" /><StatusPill status={v.status} removed={v.removed_at} /></div>
                 <div className="small muted">{v.agenda?.name}{proceduresOf(v).length ? ` · ${proceduresOf(v).map((p) => p.name).join(', ')}` : ''}</div>
               </div>
             ))}
@@ -247,7 +252,7 @@ export function AppointmentSheet({ appointment, agendas, onClose, onChanged }) {
             {past.length === 0 && <div className="small muted">Nenhum.</div>}
             {past.map((v) => (
               <div key={v.id} className="side-item">
-                <div className="row"><span className="tnum">{formatDay(localDay(v.starts_at))}</span><span className="grow" /><StatusPill status={v.status} /></div>
+                <div className="row"><span className="tnum">{formatDay(localDay(v.starts_at))}</span><span className="grow" /><StatusPill status={v.status} removed={v.removed_at} /></div>
                 <div className="small muted">{v.agenda?.name}{proceduresOf(v).length ? ` · ${proceduresOf(v).map((p) => p.name).join(', ')}` : ''}</div>
               </div>
             ))}

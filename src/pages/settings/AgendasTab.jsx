@@ -27,7 +27,8 @@ function AgendaEditor({ agenda, onSaved }) {
 
   useEffect(() => {
     setInfo(agenda);
-    setTypes(agenda.appointment_types.filter((t) => t.active).sort((a, b) => a.sort_order - b.sort_order));
+    // `label` is the name the clinic sees; the API keeps matching on `name`.
+    setTypes(agenda.appointment_types.filter((t) => t.active).sort((a, b) => a.sort_order - b.sort_order).map((t) => ({ ...t, label: t.display_name || t.name })));
     setHours(agenda.agenda_hours.map((h) => ({ ...h, start_time: hhmm(h.start_time), end_time: hhmm(h.end_time) })));
     const byDay = {};
     for (const s of agenda.agenda_slot_times) (byDay[s.weekday] ??= []).push(hhmm(s.start_time));
@@ -54,10 +55,11 @@ function AgendaEditor({ agenda, onSaved }) {
       if (removed.length) await must(supabase.from('appointment_types').update({ active: false, is_default: false }).in('id', removed));
       await must(supabase.from('appointment_types').update({ is_default: false }).eq('agenda_id', agenda.id));
       for (const [i, t] of types.entries()) {
-        const row = { agenda_id: agenda.id, name: t.name.trim(), duration_minutes: Number(t.duration_minutes) || 30, is_default: Boolean(t.is_default), active: true, sort_order: i };
-        if (!row.name) continue;
-        if (t.id) await must(supabase.from('appointment_types').update(row).eq('id', t.id));
-        else await must(supabase.from('appointment_types').insert(row));
+        const label = t.label.trim();
+        if (!label) continue;
+        const row = { agenda_id: agenda.id, duration_minutes: Number(t.duration_minutes) || 30, is_default: Boolean(t.is_default), active: true, sort_order: i };
+        if (t.id) await must(supabase.from('appointment_types').update({ ...row, display_name: label === t.name ? null : label }).eq('id', t.id));
+        else await must(supabase.from('appointment_types').insert({ ...row, name: label }));
       }
 
       for (const h of hours) {
@@ -94,14 +96,14 @@ function AgendaEditor({ agenda, onSaved }) {
       <div className="section-title" style={{ marginTop: 6 }}>Tipos de atendimento</div>
       {types.map((t, i) => (
         <div key={t.id ?? `n${i}`} className="row" style={{ marginBottom: 6 }}>
-          <input className="input" value={t.name} placeholder="Nome" onChange={(e) => setTypes(types.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)))} />
+          <input className="input" value={t.label} placeholder="Nome" title={t.id && t.label !== t.name ? `Na API continua "${t.name}"` : undefined} onChange={(e) => setTypes(types.map((x, j) => (j === i ? { ...x, label: e.target.value } : x)))} />
           <input className="input" type="number" min="5" style={{ width: 90 }} value={t.duration_minutes} onChange={(e) => setTypes(types.map((x, j) => (j === i ? { ...x, duration_minutes: e.target.value } : x)))} />
           <span className="small muted">min</span>
           <label className="check small"><input type="radio" name={`default-${agenda.id}`} checked={Boolean(t.is_default)} onChange={() => setTypes(types.map((x, j) => ({ ...x, is_default: j === i })))} /> padrão</label>
           <button type="button" className="icon-btn" onClick={() => setTypes(types.filter((_, j) => j !== i))} aria-label="Remover tipo"><Trash2 /></button>
         </div>
       ))}
-      <button type="button" className="btn btn-sm" onClick={() => setTypes([...types, { name: '', duration_minutes: 30, is_default: types.length === 0 }])}><Plus /> Tipo</button>
+      <button type="button" className="btn btn-sm" onClick={() => setTypes([...types, { label: '', duration_minutes: 30, is_default: types.length === 0 }])}><Plus /> Tipo</button>
 
       <div className="section-title" style={{ marginTop: 16 }}>Horário de atendimento</div>
       <table className="table" style={{ marginBottom: 10 }}>

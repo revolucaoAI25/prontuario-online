@@ -5,6 +5,7 @@ import { useLoad } from '../lib/hooks.js';
 import { useToast } from '../context/ToastContext.jsx';
 import { Field, Modal } from '../components/ui.jsx';
 import { ROLE_LABEL } from '../lib/format.js';
+import { PALETTE, channelColor } from '../lib/channels.js';
 
 // Create, rename, choose who takes part in, or delete a team group (admin).
 // Admins and secretaries see every group anyway; this picks the others.
@@ -12,6 +13,7 @@ export function ChatGroupModal({ channel, onClose, onSaved, onDeleted }) {
   const toast = useToast();
   const [name, setName] = useState(channel?.name ?? '');
   const [everyone, setEveryone] = useState(channel ? channel.everyone : true);
+  const [color, setColor] = useState(() => (channel ? channelColor(channel) : PALETTE[5][1]));
   const [members, setMembers] = useState(null);
   const [saving, setSaving] = useState(false);
 
@@ -32,9 +34,9 @@ export function ChatGroupModal({ channel, onClose, onSaved, onDeleted }) {
     try {
       let id = channel?.id;
       if (id) {
-        await must(supabase.from('chat_channels').update({ name: name.trim(), everyone }).eq('id', id));
+        await must(supabase.from('chat_channels').update({ name: name.trim(), everyone, color }).eq('id', id));
       } else {
-        id = (await must(supabase.from('chat_channels').insert({ name: name.trim(), everyone }).select('id').single())).id;
+        id = (await must(supabase.from('chat_channels').insert({ name: name.trim(), everyone, color }).select('id').single())).id;
       }
       await must(supabase.from('chat_channel_members').delete().eq('channel_id', id));
       if (!everyone && members?.length) await must(supabase.from('chat_channel_members').insert(members.map((staffId) => ({ channel_id: id, staff_id: staffId }))));
@@ -67,6 +69,14 @@ export function ChatGroupModal({ channel, onClose, onSaved, onDeleted }) {
       </>}
     >
       <Field label="Nome do grupo"><input className="input" autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="ex.: Avisos gerais" /></Field>
+      <div className="field">
+        <label>Cor das notificações</label>
+        <div className="swatches">
+          {PALETTE.map(([label, hex]) => (
+            <button key={hex} type="button" className={`swatch ${color.toLowerCase() === hex.toLowerCase() ? 'on' : ''}`} style={{ background: hex }} onClick={() => setColor(hex)} title={label} aria-label={label} />
+          ))}
+        </div>
+      </div>
       <div className="field">
         <label>Quem participa</label>
         <label className="check"><input type="radio" checked={everyone} onChange={() => setEveryone(true)} /> Toda a equipe</label>
