@@ -117,7 +117,7 @@ a:hover { text-decoration-color: currentColor; }
   display: flex; align-items: center; justify-content: center; box-shadow: 0 0 0 2px var(--surface);
   text-shadow: 0 1px 1px rgba(0, 0, 0, 0.25); font-variant-numeric: tabular-nums;
 }
-.bubbles .bubble + .bubble { margin-right: -10px; }
+.bubbles .bubble + .bubble { margin-right: -4px; }
 .bubbles.single .bubble { background: var(--danger); }
 .bubbles.whatsapp .bubble { background: #3f9d6b; }
 .bubbles.tasks .bubble { background: var(--warn); }
