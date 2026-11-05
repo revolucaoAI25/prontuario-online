@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, CalendarPlus, CircleDollarSign, Maximize2, Minimize2, PanelRightClose, PanelRightOpen, Paperclip, Pencil, Trash2, UserPen, MessageCircle } from 'lucide-react';
+import { ArrowLeft, CalendarPlus, CircleDollarSign, MapPin, Maximize2, Minimize2, PanelRightClose, PanelRightOpen, Paperclip, Pencil, Trash2, UserPen, MessageCircle } from 'lucide-react';
 import { supabase, must } from '../lib/supabase.js';
 import { useLoad } from '../lib/hooks.js';
 import { useAuth } from '../context/AuthContext.jsx';
@@ -254,7 +254,12 @@ export function RecordPage() {
         <div className="grow" style={{ minWidth: 200 }}>
           <h1>{patient.full_name}</h1>
           <div className="small muted">
-            {[age != null && `${age} anos`, patient.phone, patient.cpf && `CPF ${patient.cpf}`, patient.profession].filter(Boolean).join(' · ')}
+            {age != null ? <b className="ink">{age} anos</b> : <button type="button" className="link-btn" onClick={() => setEditing(true)}>sem data de nascimento</button>}
+            {[patient.phone, patient.cpf && `CPF ${patient.cpf}`, patient.profession].filter(Boolean).map((x) => <span key={x}> · {x}</span>)}
+          </div>
+          <div className="small muted row" style={{ gap: 4, marginTop: 2 }}>
+            <MapPin size={13} />
+            {patient.address ? <span className="ink">{patient.address}</span> : <button type="button" className="link-btn" onClick={() => setEditing(true)}>sem endereço</button>}
           </div>
           {patient.notes && <div className="small" style={{ marginTop: 4 }}>{patient.notes}</div>}
         </div>

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { ArrowLeft, CalendarX2, CircleDollarSign, FileText, MessageCircle, Trash2 } from 'lucide-react';
+import { ArrowLeft, CalendarX2, CircleDollarSign, FileText, MapPin, MessageCircle, Trash2 } from 'lucide-react';
 import { supabase, must } from '../../lib/supabase.js';
 import { useLoad } from '../../lib/hooks.js';
 import { useToast } from '../../context/ToastContext.jsx';
@@ -109,7 +109,7 @@ export function AppointmentSheet({ appointment, agendas, onClose, onChanged }) {
 
   async function remove() {
     // eslint-disable-next-line no-alert
-    if (!window.confirm(`Apagar este agendamento de ${patient?.full_name}? Para manter o histórico, prefira "Cancelar".`)) return;
+    if (!window.confirm(`Apagar este agendamento de ${patient?.full_name}? Para manter o histórico, prefira "Remover da agenda".`)) return;
     const { error } = await supabase.from('appointments').delete().eq('id', appointment.id);
     if (error) return toast.error(error);
     toast.info('Agendamento apagado.');
@@ -131,7 +131,8 @@ export function AppointmentSheet({ appointment, agendas, onClose, onChanged }) {
         <Avatar name={patient?.full_name} size="lg" />
         <div className="grow" style={{ minWidth: 0 }}>
           <h2>{patient?.full_name}</h2>
-          <div className="small muted">{[age != null && `${age} anos`, patient?.phone].filter(Boolean).join(' · ')}</div>
+          <div className="small muted">{[age != null ? `${age} anos` : 'sem data de nascimento', patient?.phone].filter(Boolean).join(' · ')}</div>
+          <div className="small muted row" style={{ gap: 4 }}><MapPin size={13} />{patient?.address || 'sem endereço'}</div>
         </div>
         <div className="row-wrap">
           <button type="button" className="btn" onClick={() => navigate(`/prontuario/${appointment.patient_id}`)}><FileText /> Prontuário</button>

@@ -108,3 +108,16 @@ test('stock sectors: anyone on the team creates them; names do not repeat', asyn
   await asUser(db, secretaria, () => db.query(`insert into stock_sectors (name) values ('Café')`));
   await expectDbError(asUser(db, secretaria, () => db.query(`insert into stock_sectors (name) values ('cafe')`)), 'stock_sectors_name_idx');
 });
+
+test('team chat alerts can be silenced per group, only for oneself', async () => {
+  const channels = (await db.query(`select id, name, agenda_id from chat_channels order by name`)).rows;
+  const everson = await createStaff(db, { name: 'Doutor Alertas', role: 'admin', agendaName: 'Dr. Everson Rezeck' });
+  const other = channels.find((c) => c.agenda_id && c.name !== 'Dr. Everson Rezeck');
+  await asUser(db, everson, () => db.query(`select set_my_muted_channels($1::uuid[])`, [[other.id, other.id, '00000000-0000-0000-0000-000000000000']]));
+  const row = await one(db, `select chat_muted_channels from staff where id = $1`, [everson]);
+  assert.deepEqual(row.chat_muted_channels, [other.id], 'deduplicated, unknown ids dropped');
+  const someoneElse = await createStaff(db, { name: 'Recepcao Alertas', role: 'secretaria' });
+  assert.deepEqual((await one(db, `select chat_muted_channels from staff where id = $1`, [someoneElse])).chat_muted_channels, []);
+  await asUser(db, everson, () => db.query(`select set_my_muted_channels('{}'::uuid[])`));
+  assert.deepEqual((await one(db, `select chat_muted_channels from staff where id = $1`, [everson])).chat_muted_channels, []);
+});

@@ -36,16 +36,16 @@
   --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
 
   /* Agenda status colors: the clinic's palette (04/11). Background is the
-     named color (verde-água, sálvia, azul-bebê, coral-suave); border, text
+     named color (verde clarinho, verde médio, azul-bebê, rosa-claro); border, text
      and dot are darker shades of it. */
-  --st-agendado-bg: #d2efea; --st-agendado-bd: #a6dcd2; --st-agendado-ink: #2b6a5f; --st-agendado-dot: #67bfae;
-  --st-confirmado-bg: #d0dcc8; --st-confirmado-bd: #adc19f; --st-confirmado-ink: #46593a; --st-confirmado-dot: #86a175;
+  --st-agendado-bg: #d8f1e5; --st-agendado-bd: #abdcc4; --st-agendado-ink: #2c6a52; --st-agendado-dot: #6cc29a;
+  --st-confirmado-bg: #c4dbb6; --st-confirmado-bd: #9fc08c; --st-confirmado-ink: #3f5a31; --st-confirmado-dot: #79a564;
   --st-chegou-bg: #bfd9ee; --st-chegou-bd: #93bde0; --st-chegou-ink: #2c5373; --st-chegou-dot: #689cc9;
-  --st-remarcar-bg: #f9d0c4; --st-remarcar-bd: #efa992; --st-remarcar-ink: #873d27; --st-remarcar-dot: #e2876b;
+  --st-remarcar-bg: #f6d5db; --st-remarcar-bd: #e9b5bf; --st-remarcar-ink: #8a4553; --st-remarcar-dot: #d98a9b;
   --st-removido-bg: #f4f3f1; --st-removido-bd: #e2dfda; --st-removido-ink: #918c85; --st-removido-dot: #c1bcb4;
-  /* Times nobody can book (outside opening hours, blocked): rosa-quartzo. */
-  --unavailable: #f6d5db;
-  --unavailable-ink: #9b5b67;
+  /* Times nobody can book (outside opening hours, lunch, blocked): areia. */
+  --unavailable: #ebe1cf;
+  --unavailable-ink: #76664b;
 }
 
 * { box-sizing: border-box; }
@@ -145,6 +145,9 @@ a:hover { text-decoration-color: currentColor; }
 .row-wrap { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .stack { display: flex; flex-direction: column; gap: 12px; }
 .muted { color: var(--ink-mute); }
+.ink { color: var(--ink-2); }
+.link-btn { all: unset; cursor: pointer; color: var(--brand); text-decoration: underline dotted; text-underline-offset: 2px; }
+.link-btn:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; border-radius: 4px; }
 .small { font-size: 12.5px; }
 .section-title { font-size: 11px; text-transform: uppercase; letter-spacing: 0.07em; color: var(--ink-mute); font-weight: 700; margin: 0 0 10px; }
 .empty { padding: 48px 20px; text-align: center; color: var(--ink-mute); font-weight: 500; display: flex; flex-direction: column; align-items: center; gap: 10px; }
@@ -258,7 +261,7 @@ input[type='checkbox'], input[type='radio'] { accent-color: var(--brand); width:
 .legend { display: flex; align-items: center; gap: 14px; padding: 0 4px 10px; flex-wrap: wrap; }
 .legend-item { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 500; color: var(--ink-mute); }
 .legend .dot { background: var(--s-dot); }
-.legend-item.unavailable .dot { background: var(--unavailable); box-shadow: inset 0 0 0 1px #e9b5bf; }
+.legend-item.unavailable .dot { background: var(--unavailable); box-shadow: inset 0 0 0 1px #d8cab0; }
 .agenda-scroll { flex: 1; overflow: auto; border-radius: var(--radius); position: relative; }
 
 .grid { display: grid; position: relative; min-width: max-content; }
@@ -277,7 +280,7 @@ input[type='checkbox'], input[type='radio'] { accent-color: var(--brand); width:
 .time-col { position: relative; }
 .time-label { position: absolute; right: 10px; font-size: 11px; color: var(--ink-mute); font-weight: 500; transform: translateY(-7px); font-variant-numeric: tabular-nums; }
 .time-label.half { font-size: 10px; color: var(--ink-faint); }
-/* Outside the opening hours: rosa-quartzo, so it is obvious nobody can be booked there. */
+/* Outside the opening hours: areia, so it is obvious nobody can be booked there. */
 .agenda-col { position: relative; border-left: 1px solid var(--border); background: var(--unavailable); cursor: copy; }
 .agenda-col .open { position: absolute; left: 0; right: 0; background: var(--surface); }
 .agenda-col.today .open { background: #fdfefe; }
@@ -288,7 +291,7 @@ input[type='checkbox'], input[type='radio'] { accent-color: var(--brand); width:
   position: absolute; left: 0; right: 0; z-index: 1; padding: 5px 9px; font-size: 11.5px; font-weight: 600;
   color: var(--ink-mute); cursor: pointer; overflow: hidden;
   color: var(--unavailable-ink);
-  background: repeating-linear-gradient(-45deg, #f6d5db, #f6d5db 6px, #f1c3cc 6px, #f1c3cc 12px);
+  background: repeating-linear-gradient(-45deg, #ebe1cf, #ebe1cf 6px, #e2d5bd 6px, #e2d5bd 12px);
 }
 .now-line { position: absolute; left: 0; right: 0; border-top: 2px solid #d9705a; z-index: 4; pointer-events: none; }
 .now-line::before { content: ''; position: absolute; left: -5px; top: -6px; width: 10px; height: 10px; border-radius: 99px; background: #d9705a; }
@@ -612,6 +615,8 @@ body.focus-mode .record-head .avatar.lg { width: 40px; height: 40px; font-size: 
 /* Team chat: each group shows its color. */
 .channel-dot { width: 30px; height: 30px; border-radius: 99px; flex: none; box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.55); }
 .chat-item .bubble { box-shadow: none; }
+.chat-item .bubble.quiet { background: var(--surface-3); color: var(--ink-mute); text-shadow: none; }
+.chat-item .silenced-icon { width: 14px; height: 14px; color: var(--ink-mute); flex: none; margin-right: 4px; }
 .icon-btn.muted, .btn.muted { color: var(--danger); background: var(--danger-bg); border-color: #eccac5; }
 .swatches { display: flex; flex-wrap: wrap; gap: 8px; }
 .swatch { width: 30px; height: 30px; border-radius: 99px; border: 0; cursor: pointer; box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.6); }

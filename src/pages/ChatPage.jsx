@@ -17,7 +17,8 @@ const firstName = (name) => String(name ?? '').replace(/^(Dra?\.?)\s+/i, '').spl
 // Internal team groups, one per agenda/sector plus Recepção. It opens on no
 // group (like WhatsApp), so a notification is never "read" by accident.
 export function ChatPage() {
-  const { staff, isAdmin, setMute } = useAuth();
+  const { staff, isAdmin, setMute, setChannelMuted } = useAuth();
+  const silenced = new Set(staff?.chat_muted_channels ?? []);
   const [managing, setManaging] = useState(null); // null | 'new' | channel
   const toast = useToast();
   const [channelId, setChannelId] = useState(null);
@@ -39,6 +40,13 @@ export function ChatPage() {
       .sort((a, b) => (b.last?.created_at ?? '').localeCompare(a.last?.created_at ?? '') || a.name.localeCompare(b.name));
   }, []);
 
+  async function toggleSilenced(channel) {
+    const quiet = !silenced.has(channel.id);
+    const error = await setChannelMuted(channel.id, quiet);
+    if (error) return toast.error(error);
+    return toast.info(quiet ? `Avisos de "${channel.name}" desligados para você. As mensagens continuam aqui.` : `Avisos de "${channel.name}" ligados.`);
+  }
+
   function open(id) {
     setChannelId(id);
     setText('');
@@ -59,7 +67,7 @@ export function ChatPage() {
   useEffect(() => {
     if (!channelId) return;
     const ids = new Set(messages.map((m) => m.id));
-    if (seen.current?.channel === channelId && !staff?.mute_chat && messages.some((m) => !seen.current.ids.has(m.id) && m.author_id !== staff?.id)) playChime();
+    if (seen.current?.channel === channelId && !staff?.mute_chat && !silenced.has(channelId) && messages.some((m) => !seen.current.ids.has(m.id) && m.author_id !== staff?.id)) playChime();
     seen.current = { channel: channelId, ids };
   }, [messages, channelId, staff]);
   const thread = useStickToBottom(channelId, shown.length);
@@ -134,7 +142,7 @@ export function ChatPage() {
           <div className="chat-list-head row">
             <div className="search grow"><Search /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Buscar grupo" /></div>
             <button type="button" className={`icon-btn ${staff?.mute_chat ? 'muted' : ''}`} onClick={() => setMute({ mute_chat: !staff?.mute_chat })}
-              title={staff?.mute_chat ? 'Som da equipe desligado (só para você). Clique para ligar.' : 'Silenciar o som da equipe (só para você)'} aria-label="Som da equipe">
+              title={staff?.mute_chat ? 'Avisos de todos os grupos desligados (só para você). Clique para ligar.' : 'Desligar os avisos de todos os grupos (só para você)'} aria-label="Som da equipe">
               {staff?.mute_chat ? <BellOff /> : <Bell />}
             </button>
             {isAdmin && <button type="button" className="icon-btn" onClick={() => setManaging('new')} title="Novo grupo" aria-label="Novo grupo"><Plus /></button>}
@@ -150,7 +158,8 @@ export function ChatPage() {
                     <div className="row"><span className="nm grow">{c.name}</span><span className="when">{listTime(c.last?.created_at)}</span></div>
                     <div className="row">
                       <span className="snip grow"><span>{c.last ? `${who}: ${c.last.body}` : 'Nenhuma mensagem'}</span></span>
-                      {unread > 0 && <span className="bubble" style={{ background: channelColor(c) }}>{unread > 99 ? '99+' : unread}</span>}
+                      {silenced.has(c.id) && <BellOff className="silenced-icon" aria-label="Avisos desligados" />}
+                      {unread > 0 && <span className={`bubble ${silenced.has(c.id) ? 'quiet' : ''}`} style={silenced.has(c.id) ? undefined : { background: channelColor(c) }}>{unread > 99 ? '99+' : unread}</span>}
                     </div>
                   </div>
                 </div>
@@ -167,6 +176,10 @@ export function ChatPage() {
                   <h3>{current.name}</h3>
                   <div className="small muted">{current.everyone ? 'Toda a equipe' : current.agenda_id ? 'Grupo da agenda' : 'Grupo da equipe'}</div>
                 </div>
+                <button type="button" className={`btn btn-sm ${silenced.has(current.id) ? 'muted' : ''}`} onClick={() => toggleSilenced(current)}
+                  title={silenced.has(current.id) ? 'Este grupo não toca som nem aparece no menu para você. Clique para voltar a avisar.' : 'Parar de receber som e aviso deste grupo (só para você). As mensagens continuam aqui.'}>
+                  {silenced.has(current.id) ? <><BellOff /> Avisos desligados</> : <><Bell /> Avisos ligados</>}
+                </button>
                 {isAdmin && <button type="button" className="icon-btn ghost" onClick={() => setManaging(current)} title="Editar grupo" aria-label="Editar grupo"><Settings2 /></button>}
               </div>
               <div className="thread" ref={thread.ref} onScroll={thread.onScroll}>

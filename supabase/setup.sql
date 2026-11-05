@@ -2502,6 +2502,88 @@ end;
 $$;
 
 -- ---------------------------------------------------------------------
+-- supabase/migrations/20261105000015_estetica_simone_hours.sql
+-- ---------------------------------------------------------------------
+
+-- Hours sent by the clinic on 05/11.
+--
+-- Estética, Monday to Friday: one-hour slots at 8:30, 9:30, 10:30, 11:30,
+-- 13:30, 14:30, 15:30, 16:30 and 17:30; closed only for lunch (12:30–13:30).
+-- Saturday is unchanged.
+--
+-- Simone: afternoons start at 13:30 instead of 14:00 (the slot at 13:30 is
+-- added on the days that had 14:00). Other windows are unchanged.
+--
+-- On a fresh install the agendas do not exist yet (the seed comes after), so
+-- this does nothing there.
+
+do $$
+declare
+    v_estetica uuid := (select id from agendas where name = 'Estética');
+    v_simone uuid := (select id from agendas where name = 'Simone Rezeck');
+    d integer;
+begin
+    if v_estetica is not null then
+        delete from agenda_hours where agenda_id = v_estetica and weekday between 1 and 5;
+        delete from agenda_slot_times where agenda_id = v_estetica and weekday between 1 and 5;
+        for d in 1..5 loop
+            insert into agenda_hours (agenda_id, weekday, start_time, end_time) values
+                (v_estetica, d, '08:30', '12:30'),
+                (v_estetica, d, '13:30', '18:30');
+            insert into agenda_slot_times (agenda_id, weekday, start_time)
+            select v_estetica, d, t::time
+            from unnest(array['08:30', '09:30', '10:30', '11:30', '13:30', '14:30', '15:30', '16:30', '17:30']) as t
+            on conflict do nothing;
+        end loop;
+    end if;
+
+    if v_simone is not null then
+        insert into agenda_slot_times (agenda_id, weekday, start_time)
+        select v_simone, h.weekday, '13:30'
+        from agenda_hours h
+        where h.agenda_id = v_simone and h.start_time = '14:00'
+          and exists (select 1 from agenda_slot_times st where st.agenda_id = v_simone and st.weekday = h.weekday)
+        on conflict do nothing;
+        update agenda_hours set start_time = '13:30'
+        where agenda_id = v_simone and start_time = '14:00'
+          and not exists (
+              select 1 from agenda_hours o
+              where o.agenda_id = agenda_hours.agenda_id and o.weekday = agenda_hours.weekday
+                and o.id <> agenda_hours.id and o.end_time > '13:30' and o.start_time < '14:00'
+          );
+    end if;
+end;
+$$;
+
+-- ---------------------------------------------------------------------
+-- supabase/migrations/20261105000016_chat_alerts_per_group.sql
+-- ---------------------------------------------------------------------
+
+-- Team chat alerts per group: each person chooses which groups beep, pop a
+-- notification and count on the menu bubble. Messages of a silenced group
+-- still show (with their unread count) in the Equipe list. The global switch
+-- (mute_chat) keeps silencing all of them.
+alter table staff add column chat_muted_channels uuid[] not null default '{}';
+
+create function set_my_muted_channels(p_channels uuid[]) returns void
+language sql security definer set search_path = public as $$
+    update staff
+    set chat_muted_channels = coalesce(
+        (select array_agg(distinct c) from unnest(p_channels) c where exists (select 1 from chat_channels ch where ch.id = c)),
+        '{}')
+    where id = auth.uid()
+$$;
+
+-- Start sensibly: someone with an agenda of their own (Dr. Everson, for
+-- example) is no longer alerted by the groups of the other agendas. The
+-- groups for everyone (Recepção) and the ones without an agenda keep alerting.
+update staff s
+set chat_muted_channels = coalesce(
+    (select array_agg(c.id) from chat_channels c where c.agenda_id is not null and c.agenda_id <> s.agenda_id),
+    '{}')
+where s.agenda_id is not null;
+
+-- ---------------------------------------------------------------------
 -- supabase/seed.sql
 -- ---------------------------------------------------------------------
 

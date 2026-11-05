@@ -41,6 +41,14 @@ export function AuthProvider({ children }) {
       if (!error) setStaff((s) => ({ ...s, ...next }));
       return error;
     },
+    // Team chat alerts for one group, only for this person.
+    setChannelMuted: async (channelId, muted) => {
+      const current = staff?.chat_muted_channels ?? [];
+      const next = muted ? [...new Set([...current, channelId])] : current.filter((id) => id !== channelId);
+      const { error } = await supabase.rpc('set_my_muted_channels', { p_channels: next });
+      if (!error) setStaff((s) => ({ ...s, chat_muted_channels: next }));
+      return error;
+    },
     signIn: (email, password) => supabase.auth.signInWithPassword({ email, password }),
     signOut: () => supabase.auth.signOut(),
   };

@@ -28,18 +28,21 @@ const NAV = [
 // Unread internal-chat messages per group, with the group's color. Every new
 // message from someone else chimes (unless this person muted the team chat)
 // and, with the app in the background, shows a system notification.
-function useUnreadChat(staffId, muted) {
+function useUnreadChat(staffId, muted, mutedChannels) {
   const [unread, setUnread] = useState([]);
   const last = useRef(null);
   const mutedRef = useRef(muted);
   mutedRef.current = muted;
+  // Groups this person silenced: no sound, no notification, no menu bubble.
+  const silencedRef = useRef(new Set());
+  silencedRef.current = new Set(mutedChannels ?? []);
 
   async function refresh() {
     const [{ data: counts }, { data: channels }] = await Promise.all([
       supabase.rpc('unread_counts'),
       supabase.from('chat_channels').select(CHANNEL_SELECT),
     ]);
-    const list = (counts ?? []).filter((r) => Number(r.unread) > 0).map((r) => {
+    const list = (counts ?? []).filter((r) => Number(r.unread) > 0 && !silencedRef.current.has(r.channel_id)).map((r) => {
       const channel = (channels ?? []).find((c) => c.id === r.channel_id);
       return { id: r.channel_id, count: Number(r.unread), color: channelColor(channel), name: channel?.name };
     });
@@ -54,7 +57,7 @@ function useUnreadChat(staffId, muted) {
     const channel = supabase
       .channel('chat-unread')
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'chat_messages' }, ({ new: m }) => {
-        if (m?.author_id && m.author_id !== staffId && !mutedRef.current) {
+        if (m?.author_id && m.author_id !== staffId && !mutedRef.current && !silencedRef.current.has(m.channel_id)) {
           playChime();
           notify('Nova mensagem da equipe', m.body, () => { window.location.assign('/comunicacao'); });
         }
@@ -67,6 +70,9 @@ function useUnreadChat(staffId, muted) {
       window.removeEventListener('chat-read', refresh);
     };
   }, [staffId]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Silencing or unsilencing a group updates the menu right away.
+  const silencedKey = (mutedChannels ?? []).join();
+  useEffect(() => { if (last.current !== null) { last.current = null; refresh(); } }, [silencedKey]); // eslint-disable-line react-hooks/exhaustive-deps
   useInterval(refresh, 10000);
   return unread;
 }
@@ -153,7 +159,7 @@ function ChatBubbles({ list }) {
 
 export function Layout() {
   const { staff, isAdmin, isReception, signOut } = useAuth();
-  const chat = useUnreadChat(staff?.id, staff?.mute_chat);
+  const chat = useUnreadChat(staff?.id, staff?.mute_chat, staff?.chat_muted_channels);
   const unread = { whatsapp: useUnreadWhatsApp(staff?.mute_whatsapp), tasks: useDueTasks(isReception) };
   const mobile = isMobileDevice();
   useEffect(() => { installSoundUnlock(); }, []);

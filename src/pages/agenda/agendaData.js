@@ -2,7 +2,7 @@ import { supabase, must } from '../../lib/supabase.js';
 import { addDays, timeToMinutes, weekday, zonedToUtc } from '../../lib/time.js';
 
 export const APPOINTMENT_SELECT = `*,
-  patient:patients(id, full_name, phone, birth_date),
+  patient:patients(id, full_name, phone, birth_date, address),
   type:appointment_types(id, name, display_name, duration_minutes),
   appointment_procedures(procedure:procedures(id, name, reminder_months))`;
 
