@@ -215,7 +215,7 @@ export function AgendaPage() {
           <div className="sub">{view === 'mes' ? subtitle : `${activeCount} ${activeCount === 1 ? 'atendimento' : 'atendimentos'} ${view === 'semana' ? 'na semana' : 'no dia'}`}</div>
         </div>
         <div className="topbar-right">
-          <button type="button" className="btn" onClick={() => setBlocking(true)}><Lock /> Bloquear horário</button>
+          <button type="button" className="btn" onClick={() => setBlocking(true)} title="Bloquear horário"><Lock /> <span className="hide-phone">Bloquear horário</span></button>
           <button type="button" className="btn btn-primary" onClick={() => setCreating({ day: view === 'dia' ? day : localDay() >= from && localDay() < to ? localDay() : from, time: '09:00', agendaId: visibleAgendas[0]?.id })}>
             <Plus /> Agendar
           </button>

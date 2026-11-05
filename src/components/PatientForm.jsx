@@ -1,9 +1,10 @@
 import { useState } from 'react';
-import { Trash2 } from 'lucide-react';
+import { Merge, Trash2 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext.jsx';
 import { supabase } from '../lib/supabase.js';
 import { useToast } from '../context/ToastContext.jsx';
 import { Modal, Field } from './ui.jsx';
+import { PatientPicker } from './PatientPicker.jsx';
 
 const EMPTY = {
   full_name: '', phone: '', phone_alt: '', cpf: '', email: '', birth_date: '',
@@ -16,6 +17,8 @@ export function PatientForm({ patient, onClose, onSaved, onDeleted }) {
   const { isAdmin } = useAuth();
   const [form, setForm] = useState(() => ({ ...EMPTY, ...Object.fromEntries(Object.entries(patient ?? {}).map(([k, v]) => [k, v ?? ''])) }));
   const [saving, setSaving] = useState(false);
+  const [merging, setMerging] = useState(false);
+  const [other, setOther] = useState(null);
   const set = (key) => (e) => setForm((f) => ({ ...f, [key]: e.target.type === 'checkbox' ? e.target.checked : e.target.value }));
 
   async function save() {
@@ -58,6 +61,29 @@ export function PatientForm({ patient, onClose, onSaved, onDeleted }) {
     onDeleted?.();
   }
 
+  // Admin: another record of the same person comes into this one.
+  async function merge() {
+    if (!other || other.isNew) return toast.error('Escolha o outro cadastro.');
+    if (other.id === patient.id) return toast.error('É o mesmo cadastro.');
+    // eslint-disable-next-line no-alert
+    if (!window.confirm(`Juntar "${other.full_name}" neste cadastro?\n\nAtendimentos, prontuário, financeiro, lembretes e WhatsApp passam para ${patient.full_name}. O outro cadastro é apagado. Não dá para desfazer.`)) return;
+    const { error } = await supabase.rpc('merge_patients', { p_keep: patient.id, p_drop: other.id });
+    if (error) return toast.error(error);
+    toast.info('Cadastros juntados.');
+    const { data } = await supabase.from('patients').select().eq('id', patient.id).single();
+    onSaved(data ?? patient);
+  }
+
+  if (merging) {
+    return (
+      <Modal title="Juntar com outro cadastro" onClose={() => setMerging(false)}
+        footer={<><button type="button" className="btn" onClick={() => setMerging(false)}>Voltar</button><button type="button" className="btn btn-primary" onClick={merge}><Merge /> Juntar</button></>}>
+        <div className="small muted" style={{ marginBottom: 12 }}>Escolha o cadastro repetido de {patient.full_name}. Tudo dele vem para este cadastro, que continua; o outro é apagado.</div>
+        <Field label="Cadastro repetido"><PatientPicker value={other} onChange={setOther} autoFocus /></Field>
+      </Modal>
+    );
+  }
+
   return (
     <Modal
       title={patient?.id ? 'Editar cadastro' : 'Novo paciente'}
@@ -65,7 +91,10 @@ export function PatientForm({ patient, onClose, onSaved, onDeleted }) {
       wide
       footer={<>
         {patient?.id && isAdmin && onDeleted && (
-          <button type="button" className="btn btn-ghost" style={{ color: 'var(--danger)', marginRight: 'auto' }} onClick={remove}><Trash2 /> Apagar paciente</button>
+          <button type="button" className="btn btn-ghost" style={{ color: 'var(--danger)' }} onClick={remove}><Trash2 /> Apagar paciente</button>
+        )}
+        {patient?.id && isAdmin && (
+          <button type="button" className="btn btn-ghost" style={{ marginRight: 'auto' }} onClick={() => setMerging(true)}><Merge /> Juntar com outro cadastro</button>
         )}
         <button type="button" className="btn" onClick={onClose}>Cancelar</button>
         <button type="button" className="btn btn-primary" disabled={saving} onClick={save}>Salvar</button>

@@ -6,6 +6,8 @@ import { AgendaPage } from './pages/agenda/AgendaPage.jsx';
 import { PatientsPage } from './pages/PatientsPage.jsx';
 import { RecordPage } from './pages/RecordPage.jsx';
 import { RecordsPage } from './pages/RecordsPage.jsx';
+import { AdminPage } from './pages/AdminPage.jsx';
+import { PeoplePage } from './pages/PeoplePage.jsx';
 import { FinancePage } from './pages/FinancePage.jsx';
 import { StockPage } from './pages/StockPage.jsx';
 import { ChatPage } from './pages/ChatPage.jsx';
@@ -41,6 +43,8 @@ export function App() {
         <Route path="/lembretes" element={<RemindersPage />} />
         <Route path="/estoque" element={<StockPage />} />
         <Route path="/financeiro" element={<ReceptionOnly><FinancePage /></ReceptionOnly>} />
+        <Route path="/administrativo" element={<ReceptionOnly><AdminPage /></ReceptionOnly>} />
+        <Route path="/pessoal" element={<AdminOnly><PeoplePage /></AdminOnly>} />
         <Route path="/configuracoes" element={<AdminOnly><SettingsPage /></AdminOnly>} />
         <Route path="*" element={<Navigate to="/agenda" replace />} />
       </Route>

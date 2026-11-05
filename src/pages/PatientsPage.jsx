@@ -1,16 +1,20 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Search, UserPlus } from 'lucide-react';
+import { Search, UserPlus, Users } from 'lucide-react';
 import { supabase, must } from '../lib/supabase.js';
 import { useDebounced, useLoad } from '../lib/hooks.js';
 import { ageFrom } from '../lib/time.js';
 import { Avatar, Empty } from '../components/ui.jsx';
 import { PatientForm } from '../components/PatientForm.jsx';
+import { useAuth } from '../context/AuthContext.jsx';
+import { DuplicatesModal } from './DuplicatesModal.jsx';
 
 export function PatientsPage() {
   const navigate = useNavigate();
   const [query, setQuery] = useState('');
   const [creating, setCreating] = useState(false);
+  const [duplicates, setDuplicates] = useState(false);
+  const { isAdmin } = useAuth();
   const q = useDebounced(query.trim(), 250);
 
   const { data: total } = useLoad(async () => {
@@ -36,6 +40,7 @@ export function PatientsPage() {
             <Search />
             <input autoFocus value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Buscar por nome, telefone ou CPF" />
           </div>
+          {isAdmin && <button type="button" className="btn" onClick={() => setDuplicates(true)}><Users /> Duplicados</button>}
           <button type="button" className="btn btn-primary" onClick={() => setCreating(true)}><UserPlus /> Novo paciente</button>
         </div>
       </header>
@@ -57,6 +62,7 @@ export function PatientsPage() {
         </div>
         {!loading && patients.length === 0 && <Empty>Nenhum paciente encontrado.</Empty>}
       </div>
+      {duplicates && <DuplicatesModal onClose={() => setDuplicates(false)} />}
       {creating && <PatientForm onClose={() => setCreating(false)} onSaved={(p) => navigate(`/prontuario/${p.id}`)} />}
     </div>
   );
