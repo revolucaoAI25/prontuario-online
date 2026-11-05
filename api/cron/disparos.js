@@ -1,4 +1,4 @@
-import { dispatchBirthdays, dispatchReminders } from '../../server/dispatch.js';
+import { dispatchBirthdays, dispatchNoShows, dispatchReminders } from '../../server/dispatch.js';
 
 // Daily job (vercel.json → crons). Vercel calls it with
 // "Authorization: Bearer <CRON_SECRET>".
@@ -13,8 +13,10 @@ export default async function handler(req, res) {
     const deadline = Date.now() + 50_000;
     const lembretes = await dispatchReminders({ deadline });
     const aniversarios = await dispatchBirthdays({ deadline });
+    // Fallback for the no-show webhook when the database job is not running.
+    const faltas = await dispatchNoShows({ deadline });
     res.statusCode = 200;
-    res.end(JSON.stringify({ ok: true, lembretes, aniversarios }));
+    res.end(JSON.stringify({ ok: true, lembretes, aniversarios, faltas }));
   } catch (error) {
     console.error(error);
     res.statusCode = 500;

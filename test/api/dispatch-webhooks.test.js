@@ -236,3 +236,145 @@ test('opening a conversation marks it read for the whole team', async () => {
   await db.query(`select mark_whatsapp_read('5531955559999@s.whatsapp.net')`);
   assert.equal(await unread(), 0);
 });
+
+// ------------------------------------------------------------- no-shows
+
+const faltas = (headers = { authorization: 'Bearer segredo-cron' }) =>
+  fetch(`${base}/cron/faltas`, { method: 'POST', headers }).then(async (r) => ({ status: r.status, body: await r.json() }));
+
+// A booking that started `hoursAgo` hours ago, booked a day before it.
+async function pastBooking(patient, { hoursAgo = 3, status = 'agendado', agenda = 'Dr. Everson Rezeck', removed = false, createdAfter = false } = {}) {
+  return (await one(
+    db,
+    `insert into appointments (agenda_id, patient_id, starts_at, ends_at, status, created_at, removed_at)
+     values ($1, $2, now() - make_interval(mins => $3), now() - make_interval(mins => $3) + interval '30 minutes', $4,
+             case when $6 then now() else now() - interval '1 day' - make_interval(mins => $3) end,
+             case when $5 then now() end)
+     returning id`,
+    [await agendaId(db, agenda), patient, Math.round(hoursAgo * 60), status, removed, createdAfter],
+  )).id;
+}
+
+const noShowsFor = (patient) => received.filter((r) => r.body.tipo === 'falta' && r.body.paciente.id === patient);
+
+test('the no-show endpoint takes the cron secret or the database token, nothing else', async () => {
+  assert.equal((await faltas({})).status, 401);
+  assert.equal((await faltas({ 'x-cron-token': 'errado' })).status, 401);
+  assert.equal((await faltas({ authorization: 'Bearer errado' })).status, 401);
+  const { token } = await one(db, `select token from private.internal_tokens where name = 'cron'`);
+  assert.equal((await faltas({ 'x-cron-token': token })).status, 200);
+  assert.deepEqual((await faltas()).body, { ok: true, faltas: { configurado: false } });
+});
+
+test('a patient not marked as arrived 2 hours after the booking is posted once', async () => {
+  await setting('no_show_webhook_url', receiverUrl);
+  const patient = await createPatient(db, { name: 'Fabio Faltou', phone: '(31) 98765-4400' });
+  const appt = await pastBooking(patient, { hoursAgo: 3, status: 'confirmado' });
+  const { body } = await faltas();
+  assert.equal(body.faltas.configurado, true);
+  const mine = noShowsFor(patient);
+  assert.equal(mine.length, 1);
+  const p = mine[0].body;
+  assert.equal(p.agendamento.id, appt);
+  assert.equal(p.agendamento.status, 'confirmado');
+  assert.equal(p.agendamento.agenda.nome, 'Dr. Everson Rezeck');
+  assert.equal(p.agendamento.paciente, undefined, 'the patient is at the top level');
+  assert.equal(p.paciente.primeiro_nome, 'Fabio');
+  assert.equal(p.paciente.whatsapp, '5531987654400');
+  assert.ok(p.minutos_desde_o_horario >= 179 && p.minutos_desde_o_horario <= 182);
+  assert.equal(p.tentativa, 1);
+  assert.deepEqual(p.agendamentos_futuros, []);
+  assert.match(p.resumo, /^Fabio Faltou\./);
+  assert.equal(mine[0].signature, `sha256=${createHmac('sha256', 'segredo-assinatura').update(mine[0].raw).digest('hex')}`);
+  assert.equal((await one(db, `select status from no_show_alerts where appointment_id = $1`, [appt])).status, 'enviado');
+
+  received = [];
+  await faltas();
+  await cron();
+  assert.equal(noShowsFor(patient).length, 0, 'not sent twice, not even by the daily job');
+});
+
+test('arrived, too early, too old, cancelled, removed, typed in later, rebooked or opted out: no post', async () => {
+  await setting('no_show_webhook_url', receiverUrl);
+  const cases = {
+    chegou: await pastBooking(await createPatient(db, { name: 'Chegou Certo', phone: '(31) 98765-4401' }), { status: 'chegou' }),
+    cedo: await pastBooking(await createPatient(db, { name: 'Ainda Cedo', phone: '(31) 98765-4402' }), { hoursAgo: 1 }),
+    velho: await pastBooking(await createPatient(db, { name: 'Muito Antigo', phone: '(31) 98765-4403' }), { hoursAgo: 30 }),
+    cancelado: await pastBooking(await createPatient(db, { name: 'Cancelou Antes', phone: '(31) 98765-4404' }), { status: 'cancelado' }),
+    removido: await pastBooking(await createPatient(db, { name: 'Tirado Agenda', phone: '(31) 98765-4405' }), { removed: true }),
+    retroativo: await pastBooking(await createPatient(db, { name: 'Lancado Depois', phone: '(31) 98765-4406' }), { createdAfter: true }),
+    semAviso: await pastBooking(await createPatient(db, { name: 'Nao Quer', phone: '(31) 98765-4407', allowMessages: false })),
+    semTelefone: await pastBooking(await createPatient(db, { name: 'Sem Fone', phone: null })),
+  };
+  const rebooked = await createPatient(db, { name: 'Ja Remarcou', phone: '(31) 98765-4408' });
+  cases.remarcou = await pastBooking(rebooked, { status: 'pediu_remarcar' });
+  await pastBooking(rebooked, { hoursAgo: -48 });
+  await faltas();
+  const ids = new Set(received.filter((r) => r.body.tipo === 'falta').map((r) => r.body.agendamento.id));
+  for (const [name, id] of Object.entries(cases)) assert.ok(!ids.has(id), `${name} was posted`);
+});
+
+test('"a remarcar" and "não compareceu" still count as a no-show', async () => {
+  await setting('no_show_webhook_url', receiverUrl);
+  const a = await createPatient(db, { name: 'Remarcar Depois', phone: '(31) 98765-4410' });
+  const b = await createPatient(db, { name: 'Nao Veio', phone: '(31) 98765-4411' });
+  await pastBooking(a, { status: 'pediu_remarcar' });
+  await pastBooking(b, { status: 'nao_compareceu' });
+  await faltas();
+  assert.equal(noShowsFor(a).length, 1);
+  assert.equal(noShowsFor(b).length, 1);
+});
+
+test('the delay comes from the settings', async () => {
+  await setting('no_show_webhook_url', receiverUrl);
+  await setting('no_show_delay_minutes', 30);
+  const patient = await createPatient(db, { name: 'Meia Hora', phone: '(31) 98765-4412' });
+  await pastBooking(patient, { hoursAgo: 1 });
+  await faltas();
+  assert.equal(noShowsFor(patient).length, 1);
+  await setting('no_show_delay_minutes', 120);
+});
+
+test('a failing no-show webhook retries soon; a patient marked as arrived meanwhile is dropped', async () => {
+  await setting('no_show_webhook_url', receiverUrl);
+  const patient = await createPatient(db, { name: 'Tenta Denovo', phone: '(31) 98765-4413' });
+  const appt = await pastBooking(patient);
+  failNext = 100;
+  await faltas();
+  let alert = await one(db, `select * from no_show_alerts where appointment_id = $1`, [appt]);
+  assert.equal(alert.status, 'pendente');
+  assert.match(alert.last_error, /500/);
+  const wait = (alert.next_attempt_at - Date.now()) / 60000;
+  assert.ok(wait > 8 && wait <= 10, `retry in ~10 min, got ${wait}`);
+  failNext = 0;
+  await db.query(`update no_show_alerts set next_attempt_at = now() where id = $1`, [alert.id]);
+  await db.query(`update appointments set status = 'chegou' where id = $1`, [appt]);
+  received = [];
+  await faltas();
+  assert.equal(noShowsFor(patient).length, 0);
+  alert = await one(db, `select status from no_show_alerts where appointment_id = $1`, [appt]);
+  assert.equal(alert.status, 'ignorado');
+});
+
+test('the database job calls the server only when the webhook is set and something is due', async () => {
+  // Stand-in for pg_net (not installed in the test database).
+  await db.query(`create schema if not exists net;
+    create table if not exists net.calls (url text, headers jsonb);
+    create or replace function net.http_post(url text, body jsonb, headers jsonb, timeout_milliseconds integer) returns bigint
+    language sql as $$ insert into net.calls values (url, headers); select 1::bigint $$;
+    delete from net.calls;`);
+  await setting('no_show_webhook_url', null);
+  assert.equal((await one(db, `select ping_no_show_dispatch() as r`)).r, 'não configurado');
+  await setting('no_show_webhook_url', receiverUrl);
+  await setting('app_url', 'https://clinica.example.com/');
+  await faltas(); // drains whatever earlier tests left
+  assert.equal((await one(db, `select ping_no_show_dispatch() as r`)).r, 'nada a enviar');
+  await pastBooking(await createPatient(db, { name: 'Ping Paciente', phone: '(31) 98765-4414' }));
+  assert.equal((await one(db, `select ping_no_show_dispatch() as r`)).r, 'chamado');
+  const call = await one(db, `select * from net.calls`);
+  assert.equal(call.url, 'https://clinica.example.com/api/cron/faltas');
+  const { token } = await one(db, `select token from private.internal_tokens where name = 'cron'`);
+  assert.equal(call.headers['x-cron-token'], token);
+  assert.equal(token.length, 64);
+  await setting('app_url', null);
+});

@@ -111,6 +111,10 @@ test('dispatch internals cannot be called by app users', async () => {
     asUser(db, admin, () => db.query(`select * from claim_due_reminders()`)),
     'permission denied',
   );
+  for (const sql of [`select * from claim_no_shows()`, `select ping_no_show_dispatch()`, `select * from no_show_candidates()`]) {
+    await expectDbError(asUser(db, admin, () => db.query(sql)), 'permission denied');
+  }
+  await expectDbError(asUser(db, admin, () => db.query(`select token from private.internal_tokens`)), 'permission denied');
 });
 
 test('configuration is admin-only', async () => {

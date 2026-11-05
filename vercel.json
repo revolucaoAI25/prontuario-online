@@ -7,6 +7,7 @@
   "rewrites": [{ "source": "/((?!api/).*)", "destination": "/index.html" }],
   "crons": [{ "path": "/api/cron/disparos", "schedule": "0 12 * * *" }],
   "functions": {
-    "api/cron/disparos.js": { "maxDuration": 60 }
+    "api/cron/disparos.js": { "maxDuration": 60 },
+    "api/cron/faltas.js": { "maxDuration": 60 }
   }
 }

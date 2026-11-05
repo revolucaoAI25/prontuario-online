@@ -135,9 +135,17 @@ QR Code; nesse caso o espelho precisa ser feito pelo provedor oficial.
 1. **Ajustes → Integrações** (só aparece para o super admin): preencha
    - **Webhook dos lembretes**: URL do fluxo (n8n/Chatflux) que manda a mensagem de retorno;
    - **Webhook de aniversário**: URL do fluxo de parabéns;
+   - **Webhook de falta** e **Avisar a falta depois de (horas)**: fluxo que fala com quem não
+     chegou (padrão: 2 horas depois do horário, sem estar marcado como "Chegou");
    e salve. O JSON que chega (paciente, procedimento, última vez, data prevista, atendimento de
    origem, histórico, agendamentos) está em `docs/WEBHOOKS.md`. Todo dia às 9h o sistema envia
-   os que venceram.
+   os lembretes e aniversários que venceram; as faltas saem ao longo do dia.
+
+   Salvar essa tela também grava o endereço do sistema (o que está na barra do navegador), que o
+   banco usa para avisar as faltas — depois de trocar o domínio, abra Integrações e salve de
+   novo. A checagem de faltas a cada 10 minutos é um job do próprio Supabase (`pg_cron` +
+   `pg_net`, ligados pela migração `20261105000014`); confira em **Database → Cron Jobs**
+   (`webhook-faltas`).
 2. **Ajustes → Procedimentos e retornos**: confira os prazos (Botox 4 meses, etc.).
 3. **API de agendamento** para a IA: endereço `https://SEU-DOMINIO/api/agenda/...`, cabeçalho
    `x-api-key: <CLINIC_API_KEY>`. Os exemplos de chamada estão em `docs/API.md`.

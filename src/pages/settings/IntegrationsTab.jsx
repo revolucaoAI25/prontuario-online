@@ -54,20 +54,29 @@ export function RemindersTab() {
 }
 
 // Webhooks and the API: the agency's super admin.
+const HOOKS = ['reminder_webhook_url', 'birthday_webhook_url', 'no_show_webhook_url'];
+
 export function IntegrationsTab() {
-  const { form, set, save, toast } = useSettings(['reminder_webhook_url', 'birthday_webhook_url']);
+  const { form, set, save, toast } = useSettings([...HOOKS, 'no_show_delay_minutes', 'app_url']);
   if (!form) return null;
   const origin = window.location.origin;
 
   function submit() {
-    for (const key of ['reminder_webhook_url', 'birthday_webhook_url']) {
+    for (const key of HOOKS) {
       if (form[key] && !/^https:\/\//.test(form[key])) return toast.error('Os webhooks precisam começar com https://');
     }
+    const hours = Number(String(form.no_show_hours ?? Number(form.no_show_delay_minutes || 120) / 60).replace(',', '.'));
+    if (!(hours >= 0.5 && hours <= 12)) return toast.error('O aviso de falta deve sair entre 0,5 e 12 horas depois do horário.');
     return save([
-      { key: 'reminder_webhook_url', value: form.reminder_webhook_url || '' },
-      { key: 'birthday_webhook_url', value: form.birthday_webhook_url || '' },
+      ...HOOKS.map((key) => ({ key, value: form[key] || '' })),
+      { key: 'no_show_delay_minutes', value: Math.round(hours * 60) },
+      // The database job calls this address (…/api/cron/faltas). Saved from
+      // the address the super admin is using, so it follows a domain change.
+      ...(/^https:\/\//.test(origin) ? [{ key: 'app_url', value: origin }] : []),
     ]);
   }
+
+  const hours = form.no_show_hours ?? String(Number(form.no_show_delay_minutes || 120) / 60).replace('.', ',');
 
   return (
     <div className="stack">
@@ -80,6 +89,12 @@ export function IntegrationsTab() {
           </Field>
           <Field label="Webhook de aniversário" full hint="Recebe um POST por aniversariante, no dia.">
             <input className="input" value={form.birthday_webhook_url} onChange={set('birthday_webhook_url')} placeholder="https://..." />
+          </Field>
+          <Field label="Webhook de falta" hint="Recebe um POST quando o paciente não foi marcado como “Chegou” depois do tempo ao lado. Uma vez por agendamento.">
+            <input className="input" value={form.no_show_webhook_url} onChange={set('no_show_webhook_url')} placeholder="https://..." />
+          </Field>
+          <Field label="Avisar a falta depois de (horas)" hint="Contado a partir do horário marcado. Padrão: 2 horas.">
+            <input className="input" inputMode="decimal" value={hours} onChange={set('no_show_hours')} />
           </Field>
         </div>
         <button type="button" className="btn btn-primary" onClick={submit}>Salvar</button>

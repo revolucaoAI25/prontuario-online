@@ -1,4 +1,4 @@
-import { createHmac } from 'node:crypto';
+import { createHmac, timingSafeEqual } from 'node:crypto';
 import { query } from './db.js';
 import { APPOINTMENT_GROUP, APPOINTMENT_SELECT, formatAppointment } from './scheduling.js';
 import { patientContexts } from './patient-context.js';
@@ -174,4 +174,57 @@ export async function dispatchBirthdays({ deadline = Date.now() + 25_000 } = {})
       },
     })),
   };
+}
+
+// No-shows: a booking that started a while ago (2 hours by default) and was
+// never marked as "chegou". One POST per booking.
+async function noShowExtras(rows) {
+  const [contexts, appts] = await Promise.all([
+    patientContexts(rows.map((r) => r.patient_id)),
+    query(`${APPOINTMENT_SELECT} where a.id = any($1::uuid[]) ${APPOINTMENT_GROUP}`, [rows.map((r) => r.appointment_id)]),
+  ]);
+  return { contexts, appts: new Map(appts.rows.map((r) => [r.id, r])) };
+}
+
+function noShowPayload(row, { contexts, appts }) {
+  const ctx = contexts.get(row.patient_id);
+  const { paciente, ...agendamento } = formatAppointment(appts.get(row.appointment_id));
+  return {
+    tipo: 'falta',
+    alerta_id: row.alert_id,
+    tentativa: row.attempts,
+    paciente: ctx.paciente,
+    agendamento,
+    minutos_desde_o_horario: row.minutes_late,
+    agendamentos_futuros: ctx.agendamentos_futuros,
+    retornos_pendentes: ctx.retornos_pendentes,
+    historico: ctx.historico,
+    resumo: ctx.resumo,
+  };
+}
+
+export async function dispatchNoShows({ deadline = Date.now() + 25_000 } = {}) {
+  const url = await settingUrl('no_show_webhook_url');
+  if (!url) return { configurado: false };
+  return {
+    configurado: true,
+    ...(await drain({
+      url,
+      deadline,
+      claimSql: `select alert_id as id, * from claim_no_shows($1)`,
+      markSent: `select mark_no_show_sent($1)`,
+      markFailed: `select mark_no_show_failed($1, $2)`,
+      enrich: noShowExtras,
+      toPayload: noShowPayload,
+    })),
+  };
+}
+
+// The database job's token (private.internal_tokens), compared in constant time.
+export async function isDatabaseCronToken(token) {
+  if (!token || typeof token !== 'string') return false;
+  const { rows } = await query(`select token from private.internal_tokens where name = 'cron'`);
+  const expected = rows[0]?.token;
+  if (!expected || expected.length !== token.length) return false;
+  return timingSafeEqual(Buffer.from(expected), Buffer.from(token));
 }
