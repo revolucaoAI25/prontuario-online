@@ -14,7 +14,7 @@ import { MonthGrid, monthDays } from './MonthGrid.jsx';
 import { AppointmentSheet } from './AppointmentSheet.jsx';
 import { AppointmentModal } from './AppointmentModal.jsx';
 import { BlockModal, UnblockModal } from './BlockModal.jsx';
-import { OpenHoursModal } from './OpenHoursModal.jsx';
+import { CloseOpeningModal, OpenHoursModal } from './OpenHoursModal.jsx';
 import { defaultType, loadAgendas, loadRange, openWindows, proceduresOf } from './agendaData.js';
 
 const VIEWS = [['dia', 'Dia'], ['semana', 'Semana'], ['mes', 'Mês']];
@@ -65,7 +65,7 @@ function step(view, day, direction) {
 
 export function AgendaPage() {
   const toast = useToast();
-  const { staff, isAdmin } = useAuth();
+  const { staff } = useAuth();
   const [day, setDay] = useState(localDay());
   const [view, setViewState] = useState(() => remembered('agenda.view', 'dia'));
   const [asList, setAsList] = useState(false);
@@ -76,12 +76,19 @@ export function AgendaPage() {
   const [blocking, setBlocking] = useState(false);
   const [unblocking, setUnblocking] = useState(null);
   const [opening, setOpening] = useState(false);
+  const [closingOpening, setClosingOpening] = useState(null);
 
   const setView = (v) => { setViewState(v); remember('agenda.view', v); };
   const [from, to] = rangeFor(view, day);
 
-  const { data: agendas = [], reload: reloadAgendas } = useLoad(loadAgendas, []);
+  const { data: baseAgendas = [], reload: reloadAgendas } = useLoad(loadAgendas, []);
   const { data: range, reload } = useLoad(() => loadRange(from, to), [from, to]);
+  // Each agenda carries its one-day openings of the period, so the grid and
+  // the "which days to show" logic treat them as opening hours.
+  const agendas = useMemo(
+    () => baseAgendas.map((a) => ({ ...a, openings: (range?.openings ?? []).filter((o) => o.agenda_id === a.id) })),
+    [baseAgendas, range],
+  );
 
   // Default selection: the professional's own agenda, otherwise all.
   useEffect(() => {
@@ -212,7 +219,7 @@ export function AgendaPage() {
           <div className="sub">{view === 'mes' ? subtitle : `${activeCount} ${activeCount === 1 ? 'atendimento' : 'atendimentos'} ${view === 'semana' ? 'na semana' : 'no dia'}`}</div>
         </div>
         <div className="topbar-right">
-          {isAdmin && <button type="button" className="btn" onClick={() => setOpening(true)} title="Abrir horário"><Clock /> <span className="hide-phone">Abrir horário</span></button>}
+          <button type="button" className="btn" onClick={() => setOpening(true)} title="Abrir horário"><Clock /> <span className="hide-phone">Abrir horário</span></button>
           <button type="button" className="btn" onClick={() => setBlocking(true)} title="Bloquear horário"><Lock /> <span className="hide-phone">Bloquear horário</span></button>
           <button type="button" className="btn btn-primary" onClick={() => setCreating({ day: view === 'dia' ? day : localDay() >= from && localDay() < to ? localDay() : from, time: '09:00', agendaId: visibleAgendas[0]?.id })}>
             <Plus /> Agendar
@@ -295,6 +302,8 @@ export function AgendaPage() {
             columns={columns}
             appointments={listRows}
             blocks={range?.blocks ?? []}
+            openings={range?.openings ?? []}
+            onOpeningClick={setClosingOpening}
             agendaColor={agendaColor}
             scrollKey={`${view}|${from}|${visibleAgendas.length}`}
             onOpen={(appt) => setOpenId(appt.id)}
@@ -319,7 +328,8 @@ export function AgendaPage() {
         />
       )}
       {unblocking && <UnblockModal block={unblocking} onClose={() => setUnblocking(null)} onDone={() => { setUnblocking(null); reload(); }} />}
-      {opening && <OpenHoursModal agendas={agendas} onClose={() => setOpening(false)} onSaved={() => { setOpening(false); reloadAgendas(); }} />}
+      {opening && <OpenHoursModal agendas={baseAgendas} day={view === 'dia' ? day : from} onClose={() => setOpening(false)} onSaved={() => { setOpening(false); reloadAgendas(); reload(); }} />}
+      {closingOpening && <CloseOpeningModal opening={closingOpening} agendaName={agendas.find((a) => a.id === closingOpening.agenda_id)?.name} onClose={() => setClosingOpening(null)} onDone={() => { setClosingOpening(null); reload(); }} />}
       {blocking && <BlockModal agendas={agendas} day={view === 'dia' ? day : from} onClose={() => setBlocking(false)} onSaved={() => { setBlocking(false); reload(); }} />}
     </div>
   );

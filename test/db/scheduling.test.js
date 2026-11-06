@@ -245,3 +245,33 @@ test('manual (screen) inserts may overlap, e.g. the 4 aesthetics beds', async ()
   const { rows } = await db.query(`select count(*)::int as n from appointments where agenda_id = $1 and starts_at = $2`, [estetica, start]);
   assert.equal(rows[0].n, 4);
 });
+
+test('a one-day opening offers its times and accepts bookings only that day, without changing the week', async () => {
+  const sunday = await futureWeekday(db, 0, 14);
+  const nextSunday = await one(db, `select ($1::date + 7)::text as d`, [sunday]);
+  await db.query(
+    `insert into agenda_openings (agenda_id, starts_at, ends_at, reason) values ($1, $2, $3, 'Mutirão')`,
+    [estetica, await localTs(db, sunday, '10:00'), await localTs(db, sunday, '12:00')],
+  );
+  const slots = async (day, agenda) => (await db.query(
+    `select to_char(starts_at at time zone clinic_tz(), 'HH24:MI') as t from available_slots($1::date, $2)`, [day, agenda],
+  )).rows.map((r) => r.t);
+  assert.deepEqual(await slots(sunday, estetica), ['10:00', '10:30', '11:00'], 'every step of the agenda, the last ending at 12:00');
+  assert.deepEqual(await slots(nextSunday.d, estetica), [], 'the next Sunday stays closed');
+  assert.deepEqual(await slots(sunday, everson), [], 'other agendas stay closed');
+
+  const booked = await book({ agenda: estetica, start: await localTs(db, sunday, '10:30') });
+  assert.equal((booked.ends_at - booked.starts_at) / 60000, 60);
+  await expectDbError(book({ agenda: estetica, start: await localTs(db, sunday, '11:30') }), 'fora_do_horario_de_atendimento');
+  await expectDbError(book({ agenda: estetica, start: await localTs(db, nextSunday.d, '10:00') }), 'fora_do_horario_de_atendimento');
+  assert.deepEqual(await slots(sunday, estetica), [], 'a 60-min booking at 10:30 leaves no full hour free');
+});
+
+test('an opening inside the usual hours does not repeat times', async () => {
+  const tuesday = await futureWeekday(db, 2, 21);
+  const before = (await db.query(`select count(*)::int as n from available_slots($1::date, $2)`, [tuesday, everson])).rows[0].n;
+  await db.query(`insert into agenda_openings (agenda_id, starts_at, ends_at) values ($1, $2, $3)`,
+    [everson, await localTs(db, tuesday, '09:00'), await localTs(db, tuesday, '10:00')]);
+  const after = (await db.query(`select count(*)::int as n from available_slots($1::date, $2)`, [tuesday, everson])).rows[0].n;
+  assert.equal(after, before);
+});

@@ -697,3 +697,11 @@ body.focus-mode .record-head .avatar.lg { width: 40px; height: 40px; font-size: 
 .time-label { z-index: 2; }
 .time-label.after-gap { transform: translateY(2px); font-weight: 700; color: var(--ink-2); }
 
+/* One-day openings: outlined, with a tag to undo them. */
+.agenda-col .opening { position: absolute; left: 0; right: 0; z-index: 1; pointer-events: none; border: 1.5px dashed #9cc9c2; border-radius: 4px; }
+.agenda-col .opening-tag { all: unset; pointer-events: auto; cursor: pointer; position: absolute; top: 2px; right: 4px; max-width: calc(100% - 8px);
+  display: inline-flex; align-items: center; gap: 5px; padding: 1px 7px; border-radius: 99px; font-size: 10.5px; font-weight: 600;
+  color: var(--brand-strong); background: var(--brand-softer); border: 1px solid #cfe3e0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.agenda-col .opening-tag i { width: 7px; height: 7px; border-radius: 99px; flex: none; }
+.agenda-col .opening-tag:focus-visible { outline: 2px solid var(--brand); outline-offset: 1px; }
+

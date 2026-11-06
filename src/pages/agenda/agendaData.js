@@ -1,5 +1,5 @@
 import { supabase, must } from '../../lib/supabase.js';
-import { addDays, timeToMinutes, weekday, zonedToUtc } from '../../lib/time.js';
+import { addDays, localDay, localMinutes, timeToMinutes, weekday, zonedToUtc } from '../../lib/time.js';
 
 export const APPOINTMENT_SELECT = `*,
   patient:patients(id, full_name, phone, birth_date, address),
@@ -21,15 +21,17 @@ export async function loadAgendas() {
   );
 }
 
-// Bookings and blocks from `fromDay` up to (not including) `toDay`, clinic time.
+// Bookings, blocks and one-day openings from `fromDay` up to (not including)
+// `toDay`, clinic time.
 export async function loadRange(fromDay, toDay) {
   const from = zonedToUtc(fromDay, '00:00').toISOString();
   const to = zonedToUtc(toDay, '00:00').toISOString();
-  const [appointments, blocks] = await Promise.all([
+  const [appointments, blocks, openings] = await Promise.all([
     must(supabase.from('appointments').select(APPOINTMENT_SELECT).gte('starts_at', from).lt('starts_at', to).order('starts_at')),
     must(supabase.from('agenda_blocks').select('*').lt('starts_at', to).gt('ends_at', from)),
+    must(supabase.from('agenda_openings').select('*').lt('starts_at', to).gt('ends_at', from)),
   ]);
-  return { appointments, blocks };
+  return { appointments, blocks, openings };
 }
 
 export const loadDay = (day) => loadRange(day, addDays(day, 1));
@@ -48,12 +50,18 @@ export function fixedTimes(agenda, day) {
     .sort((a, b) => a - b);
 }
 
+// The agenda's weekly hours on that day, plus its one-day openings
+// (agenda.openings, attached by the agenda page).
 export function openWindows(agenda, day) {
   const dow = weekday(day);
-  return (agenda?.agenda_hours ?? [])
+  const weekly = (agenda?.agenda_hours ?? [])
     .filter((h) => h.weekday === dow)
-    .map((h) => [timeToMinutes(h.start_time), timeToMinutes(h.end_time)])
-    .sort((a, b) => a[0] - b[0]);
+    .map((h) => [timeToMinutes(h.start_time), timeToMinutes(h.end_time)]);
+  const extra = (agenda?.openings ?? [])
+    .filter((o) => localDay(o.starts_at) <= day && localDay(o.ends_at) >= day)
+    .map((o) => [localDay(o.starts_at) === day ? localMinutes(o.starts_at) : 0, localDay(o.ends_at) === day ? localMinutes(o.ends_at) : 24 * 60])
+    .filter(([s, e]) => e > s);
+  return [...weekly, ...extra].sort((a, b) => a[0] - b[0]);
 }
 
 // Same rule as default_end() in SQL: on a fixed start time the slot lasts

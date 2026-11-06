@@ -64,7 +64,7 @@ function unionWindows(agendas, day) {
 // bookings of those agendas on that day go in it. Dragging moves a booking
 // to another column (agenda or day) and time; dragging the bottom edge
 // changes its length.
-export function TimeGrid({ columns, appointments, blocks, agendaColor, onOpen, onCreate, onMove, onBlockClick, onHeaderClick, scrollKey }) {
+export function TimeGrid({ columns, appointments, blocks, openings = [], agendaColor, onOpen, onCreate, onMove, onBlockClick, onOpeningClick, onHeaderClick, scrollKey }) {
   const bodyRef = useRef(null);
   const dragRef = useRef(null);
   const [drag, setDrag] = useState(null);
@@ -152,7 +152,7 @@ export function TimeGrid({ columns, appointments, blocks, agendaColor, onOpen, o
   }).filter((p) => p.col >= 0);
 
   function columnClick(event, column) {
-    if (event.target.closest('.appt, .block')) return;
+    if (event.target.closest('.appt, .block, .opening-tag')) return;
     const rect = event.currentTarget.getBoundingClientRect();
     const minute = minuteAt(event.clientY - rect.top);
     const fixed = column.agendas.length === 1 ? fixedTimes(column.agendas[0], column.day) : [];
@@ -281,6 +281,8 @@ export function TimeGrid({ columns, appointments, blocks, agendaColor, onOpen, o
           const ids = new Set(column.agendas.map((a) => a.id));
           const colBlocks = blocks.filter((b) => (b.agenda_id === null || ids.has(b.agenda_id))
             && localDay(b.starts_at) <= column.day && localDay(b.ends_at) >= column.day);
+          const colOpenings = openings.filter((o) => ids.has(o.agenda_id)
+            && localDay(o.starts_at) <= column.day && localDay(o.ends_at) >= column.day);
           return (
             <div key={column.key} className={`agenda-col ${column.day === today ? 'today' : ''}`} style={{ height }} onClick={(e) => columnClick(e, column)} data-agenda={single?.name ?? column.day} data-day={column.day}>
               {unionWindows(column.agendas, column.day).map(([s, e]) => (
@@ -297,6 +299,20 @@ export function TimeGrid({ columns, appointments, blocks, agendaColor, onOpen, o
                   <div key={b.id} className="block" style={{ top: y(s), height: y(e) - y(s) }} title={b.reason ?? 'Bloqueado'}
                     onClick={(ev) => { ev.stopPropagation(); onBlockClick(b); }}>
                     {b.agenda_id === null ? 'Clínica fechada' : 'Bloqueado'}{b.reason ? ` · ${b.reason}` : ''}
+                  </div>
+                );
+              })}
+              {colOpenings.map((o) => {
+                const s = localDay(o.starts_at) === column.day ? localMinutes(o.starts_at) : rangeStart;
+                const e = localDay(o.ends_at) === column.day ? localMinutes(o.ends_at) : rangeEnd;
+                if (y(e) - y(s) <= 0) return null;
+                const who = !single && agendaColor ? agendaColor(o.agenda_id) : null;
+                return (
+                  <div key={o.id} className="opening" style={{ top: y(s), height: y(e) - y(s) }}>
+                    <button type="button" className="opening-tag" onClick={(ev) => { ev.stopPropagation(); onOpeningClick?.(o); }}
+                      title={`Aberto só neste dia, ${minutesToTime(s)}–${minutesToTime(e)}${o.reason ? ` · ${o.reason}` : ''}. Clique para desfazer.`}>
+                      {who && <i style={{ background: who }} />}Aberto neste dia{o.reason ? ` · ${o.reason}` : ''}
+                    </button>
                   </div>
                 );
               })}
