@@ -3,11 +3,10 @@
 -- 14h for the two doctors' squeeze-ins) to be adjusted in Ajustes.
 -- Colors are the clinic's palette: azul-aço, âmbar, verde-folha, rosa-forte.
 
--- The reception sees the takings of Estética and Depilação (commissions),
--- not those of the two doctors.
+-- The reception sees the takings of every agenda except Dr. Everson's.
 insert into agendas (name, color, slot_step_minutes, sort_order, finance_shared) values
     ('Dr. Everson Rezeck', '#6F8FB8', 20, 1, false),
-    ('Simone Rezeck', '#E8B86D', 20, 2, false),
+    ('Simone Rezeck', '#E8B86D', 20, 2, true),
     ('Estética', '#8CBF9A', 30, 3, true),
     ('Depilação a laser', '#E58FA9', 30, 4, true);
 

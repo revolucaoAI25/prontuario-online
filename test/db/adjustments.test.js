@@ -121,3 +121,35 @@ test('team chat alerts can be silenced per group, only for oneself', async () =>
   await asUser(db, everson, () => db.query(`select set_my_muted_channels('{}'::uuid[])`));
   assert.deepEqual((await one(db, `select chat_muted_channels from staff where id = $1`, [everson])).chat_muted_channels, []);
 });
+
+test('Financeiro: one password per person; without one, a secretary waits for Dr. Everson', async () => {
+  const renata = await createStaff(db, { name: 'Renata Senha', role: 'secretaria' });
+  const outra = await createStaff(db, { name: 'Outra Secretaria', role: 'secretaria' });
+  const doutor = await createStaff(db, { name: 'Doutor Senha', role: 'admin' });
+  await db.query(`delete from finance_pin`);
+  const check = (user, pin) => asUser(db, user, async () => (await one(db, `select check_finance_pin($1) as r`, [pin])).r);
+
+  await expectDbError(asUser(db, renata, () => db.query(`select set_staff_finance_pin($1, '7069')`, [renata])), 'acesso_negado');
+  await expectDbError(asUser(db, doutor, () => db.query(`select set_staff_finance_pin($1, '7069')`, [simone])), 'usuario_invalido');
+  await asUser(db, doutor, () => db.query(`select set_staff_finance_pin($1, '7069')`, [renata]));
+  await asUser(db, doutor, () => db.query(`select set_staff_finance_pin($1, '0239')`, [doutor]));
+
+  assert.equal(await check(renata, '7069'), 'ok');
+  assert.equal(await check(renata, '0239'), 'errada', 'the doctor’s password is not hers');
+  assert.equal(await check(doutor, '0239'), 'ok');
+  assert.equal(await check(outra, '1234'), 'sem_senha');
+  const people = await asUser(db, doutor, async () => (await db.query(`select full_name, has_pin from finance_pin_people()`)).rows);
+  assert.ok(people.some((p) => p.full_name === 'Renata Senha' && p.has_pin));
+  assert.equal((await asUser(db, renata, () => db.query(`select * from finance_pin_people()`))).rows.length, 0);
+  assert.equal((await asUser(db, renata, () => db.query(`select * from staff_finance_pins`))).rows.length, 0, 'nobody reads the hashes');
+
+  await asUser(db, doutor, () => db.query(`select set_staff_finance_pin($1, null)`, [renata]));
+  assert.equal(await check(renata, '7069'), 'sem_senha');
+});
+
+test('the reception sees the money of every agenda except Dr. Everson’s', async () => {
+  const shared = (await db.query(`select name, finance_shared from agendas order by sort_order`)).rows;
+  assert.deepEqual(shared.map((a) => [a.name, a.finance_shared]), [
+    ['Dr. Everson Rezeck', false], ['Simone Rezeck', true], ['Estética', true], ['Depilação a laser', true],
+  ]);
+});

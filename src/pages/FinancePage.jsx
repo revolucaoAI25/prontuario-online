@@ -121,6 +121,17 @@ function DailyClose() {
         ))}
       </div>
 
+      {(summary?.por_forma ?? []).length > 0 && (
+        <div className="card card-pad" style={{ marginBottom: 14 }}>
+          <div className="section-title">Formas de pagamento do dia</div>
+          <div className="method-chips">
+            {summary.por_forma.map((f) => (
+              <div key={f.forma} className="method-chip"><span className="muted small">{methodLabel(f.forma)} · {f.quantidade}x</span><b className="tnum">{formatMoney(f.total)}</b></div>
+            ))}
+          </div>
+        </div>
+      )}
+
       <div className="close-lists">
         <div className="card">
           <div className="section-title" style={{ padding: '14px 14px 0' }}>Lançamentos do dia</div>

@@ -8,6 +8,7 @@ const PX = 2; // pixels per minute: a 20-minute visit fits time, name and proced
 const SNAP = 5; // minutes
 const TIME_COL = 60;
 const HOLD_MS = 400; // on a touch screen, hold a booking this long to move it
+const GAP_PX = 14; // the thin band that stands for hours nobody works
 
 function minutesOf(appt) {
   const start = localMinutes(appt.starts_at);
@@ -84,26 +85,51 @@ export function TimeGrid({ columns, appointments, blocks, agendaColor, onOpen, o
     return columns.findIndex((c) => c.day === day && c.agendas.some((a) => a.id === appt.agenda_id));
   };
 
-  const [rangeStart, rangeEnd] = useMemo(() => {
-    let lo = Infinity;
-    let hi = -Infinity;
-    for (const column of columns) {
-      for (const [s, e] of unionWindows(column.agendas, column.day)) {
-        lo = Math.min(lo, s);
-        hi = Math.max(hi, e);
-      }
+  // Only the hours someone works are drawn: the opening windows of the agendas
+  // shown, plus any booking outside them. Hours nobody works (the lunch break,
+  // mornings an agenda does not open) collapse into a thin band.
+  const segments = useMemo(() => {
+    const spans = [];
+    for (const column of columns) spans.push(...unionWindows(column.agendas, column.day));
+    for (const appt of appointments) spans.push(minutesOf(appt));
+    if (spans.length === 0) spans.push([8 * 60, 19 * 60]);
+    const merged = [];
+    for (const [s0, e0] of spans.map(([s, e]) => [Math.max(0, Math.floor(s / 30) * 30), Math.min(24 * 60, Math.ceil(e / 30) * 30)]).sort((a, b) => a[0] - b[0])) {
+      const last = merged[merged.length - 1];
+      if (last && s0 <= last[1]) last[1] = Math.max(last[1], e0);
+      else merged.push([s0, e0]);
     }
-    for (const appt of appointments) {
-      const [s, e] = minutesOf(appt);
-      lo = Math.min(lo, s);
-      hi = Math.max(hi, e);
-    }
-    if (!Number.isFinite(lo)) [lo, hi] = [8 * 60, 19 * 60];
-    return [Math.max(0, Math.floor(lo / 60) * 60), Math.min(24 * 60, Math.ceil(hi / 60) * 60)];
+    let top = 0;
+    return merged.map(([s, e], i) => {
+      const seg = { s, e, top: top + (i ? GAP_PX : 0) };
+      top = seg.top + (e - s) * PX;
+      return seg;
+    });
   }, [columns, appointments]);
-
-  const height = (rangeEnd - rangeStart) * PX;
-  const y = (minute) => (minute - rangeStart) * PX;
+  const rangeStart = segments[0].s;
+  const rangeEnd = segments[segments.length - 1].e;
+  const last = segments[segments.length - 1];
+  const height = last.top + (last.e - last.s) * PX;
+  // minute → pixel (a minute in a hidden gap sits on the edge of the band)
+  const y = (minute) => {
+    let prev = segments[0];
+    for (const seg of segments) {
+      if (minute < seg.s) return prev === seg ? seg.top : prev.top + (prev.e - prev.s) * PX;
+      if (minute <= seg.e) return seg.top + (minute - seg.s) * PX;
+      prev = seg;
+    }
+    return height;
+  };
+  // pixel → minute, on the visible hours only
+  const minuteAt = (px) => {
+    for (const seg of segments) {
+      const bottom = seg.top + (seg.e - seg.s) * PX;
+      if (px < seg.top) return seg.s;
+      if (px <= bottom) return seg.s + (px - seg.top) / PX;
+    }
+    return rangeEnd;
+  };
+  const visible = (minute) => segments.some((seg) => minute >= seg.s && minute <= seg.e);
   const minWidth = columns.length > 5 ? 128 : 180;
   const template = `${TIME_COL}px repeat(${columns.length}, minmax(${minWidth}px, 1fr))`;
   const showsToday = columns.some((c) => c.day === today);
@@ -115,7 +141,7 @@ export function TimeGrid({ columns, appointments, blocks, agendaColor, onOpen, o
     if (!scroller || scrolledFor.current === scrollKey) return;
     const firstStart = Math.min(...appointments.map((a) => minutesOf(a)[0]));
     const target = showsToday ? now - 60 : Number.isFinite(firstStart) ? firstStart - 30 : rangeStart;
-    scroller.scrollTop = Math.max(0, (target - rangeStart) * PX);
+    scroller.scrollTop = Math.max(0, y(Math.max(rangeStart, target)));
     if (appointments.length || showsToday) scrolledFor.current = scrollKey;
   }, [scrollKey, appointments]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -128,7 +154,7 @@ export function TimeGrid({ columns, appointments, blocks, agendaColor, onOpen, o
   function columnClick(event, column) {
     if (event.target.closest('.appt, .block')) return;
     const rect = event.currentTarget.getBoundingClientRect();
-    const minute = rangeStart + (event.clientY - rect.top) / PX;
+    const minute = minuteAt(event.clientY - rect.top);
     const fixed = column.agendas.length === 1 ? fixedTimes(column.agendas[0], column.day) : [];
     const slot = [...fixed].reverse().find((t) => t <= minute && minute - t < 60);
     onCreate({ day: column.day, agendaId: column.agendas.length === 1 ? column.agendas[0].id : null, minutes: slot ?? Math.floor(minute / SNAP) * SNAP });
@@ -176,18 +202,18 @@ export function TimeGrid({ columns, appointments, blocks, agendaColor, onOpen, o
     }
     if (!d.moved && Math.abs(dx) < 4 && Math.abs(dy) < 4) return;
     d.moved = true;
-    const delta = Math.round(dy / PX / SNAP) * SNAP;
+    const snap = (m) => Math.round(m / SNAP) * SNAP;
     const { item } = d;
     if (d.mode === 'move') {
       const duration = item.end - item.start;
-      const start = Math.min(Math.max(item.start + delta, rangeStart), rangeEnd - duration);
+      const start = Math.min(Math.max(snap(minuteAt(y(item.start) + dy)), rangeStart), rangeEnd - duration);
       const colWidth = (bodyRef.current.getBoundingClientRect().width - TIME_COL) / columns.length;
       let col = Math.min(Math.max(item.col + Math.round(dx / colWidth), 0), columns.length - 1);
       // In the week view a booking keeps its agenda: only columns showing it qualify.
       if (!columns[col].agendas.some((a) => a.id === item.appt.agenda_id) && columns[col].agendas.length > 1) col = item.col;
       d.last = { id: item.id, col, start, end: start + duration };
     } else {
-      const end = Math.min(Math.max(item.end + delta, item.start + SNAP), rangeEnd);
+      const end = Math.min(Math.max(snap(minuteAt(y(item.end) + dy)), item.start + SNAP), rangeEnd);
       d.last = { id: item.id, col: item.col, start: item.start, end };
     }
     setDrag(d.last);
@@ -216,8 +242,15 @@ export function TimeGrid({ columns, appointments, blocks, agendaColor, onOpen, o
   // (FastClinic's 12:15, 16:10...). Otherwise every 30 minutes.
   const exact = columns.length === 1 && columns[0].agendas.length === 1 ? fixedTimes(columns[0].agendas[0], columns[0].day) : [];
   const marks = [];
-  if (exact.length) marks.push(...exact.filter((m) => m >= rangeStart && m <= rangeEnd));
-  else for (let m = rangeStart; m <= rangeEnd; m += 30) marks.push(m);
+  if (exact.length) marks.push(...exact.filter(visible));
+  else for (const seg of segments) for (let m = seg.s; m <= seg.e; m += 30) marks.push(m);
+  // each visible stretch is labelled from its first hour
+  // (an hour sitting right on top of a hidden band is not labelled: the next
+  // stretch's first hour, just below the band, says where things resume)
+  const starts = new Set(segments.slice(1).map((seg) => seg.s));
+  const ends = new Set(segments.slice(0, -1).map((seg) => seg.e));
+  const labels = [...new Set([...starts, ...marks.filter((m) => m > rangeStart)])].filter((m) => !ends.has(m) || starts.has(m)).sort((a, b) => a - b);
+  const gaps = segments.slice(1).map((seg, i) => ({ top: segments[i].top + (segments[i].e - segments[i].s) * PX, from: segments[i].e, to: seg.s }));
 
   return (
     <div className="grid" style={{ gridTemplateColumns: template }}>
@@ -235,9 +268,10 @@ export function TimeGrid({ columns, appointments, blocks, agendaColor, onOpen, o
       </div>
       <div ref={bodyRef} className="grid-body" style={{ gridColumn: '1 / -1', gridTemplateColumns: template, height }}>
         <div className="time-col">
-          {marks.filter((m) => m > rangeStart).map((m) => (
-            <span key={m} className={`time-label ${!exact.length && m % 60 ? 'half' : ''}`} style={{ top: y(m) }}>{minutesToTime(m)}</span>
+          {labels.map((m) => (
+            <span key={m} className={`time-label ${!exact.length && m % 60 ? 'half' : ''} ${starts.has(m) ? 'after-gap' : ''}`} style={{ top: y(m) }}>{minutesToTime(m)}</span>
           ))}
+          {gaps.map((g) => <span key={g.from} className="time-gap" style={{ top: g.top, height: GAP_PX }} title={`${minutesToTime(g.from)}–${minutesToTime(g.to)}: ninguém atende`} />)}
         </div>
         {columns.map((column, col) => {
           const single = column.agendas.length === 1 ? column.agendas[0] : null;
@@ -250,26 +284,27 @@ export function TimeGrid({ columns, appointments, blocks, agendaColor, onOpen, o
           return (
             <div key={column.key} className={`agenda-col ${column.day === today ? 'today' : ''}`} style={{ height }} onClick={(e) => columnClick(e, column)} data-agenda={single?.name ?? column.day} data-day={column.day}>
               {unionWindows(column.agendas, column.day).map(([s, e]) => (
-                <div key={`${s}-${e}`} className="open" style={{ top: y(s), height: (e - s) * PX }} />
+                <div key={`${s}-${e}`} className="open" style={{ top: y(s), height: y(e) - y(s) }} />
               ))}
               {marks.map((m) => <div key={m} className={exact.length || m % 60 === 0 ? 'hourline' : 'halfline'} style={{ top: y(m) }} />)}
-              {!exact.length && fixed.map((m) => <div key={`f${m}`} className="fixed-slot" style={{ top: y(m) }} title={minutesToTime(m)} />)}
+              {gaps.map((g) => <div key={`g${g.from}`} className="grid-gap" style={{ top: g.top, height: GAP_PX }} />)}
+              {!exact.length && fixed.filter(visible).map((m) => <div key={`f${m}`} className="fixed-slot" style={{ top: y(m) }} title={minutesToTime(m)} />)}
               {colBlocks.map((b) => {
                 const s = Math.max(localDay(b.starts_at) === column.day ? localMinutes(b.starts_at) : 0, rangeStart);
                 const e = Math.min(localDay(b.ends_at) === column.day ? localMinutes(b.ends_at) : 24 * 60, rangeEnd);
-                if (e <= s) return null;
+                if (y(e) - y(s) <= 0) return null;
                 return (
-                  <div key={b.id} className="block" style={{ top: y(s), height: (e - s) * PX }} title={b.reason ?? 'Bloqueado'}
+                  <div key={b.id} className="block" style={{ top: y(s), height: y(e) - y(s) }} title={b.reason ?? 'Bloqueado'}
                     onClick={(ev) => { ev.stopPropagation(); onBlockClick(b); }}>
                     {b.agenda_id === null ? 'Clínica fechada' : 'Bloqueado'}{b.reason ? ` · ${b.reason}` : ''}
                   </div>
                 );
               })}
-              {column.day === today && now >= rangeStart && now <= rangeEnd && <div className="now-line" style={{ top: y(now) }} />}
+              {column.day === today && visible(now) && <div className="now-line" style={{ top: y(now) }} />}
               {items.map((item) => {
                 const { appt } = item;
                 const lane = lanes.get(item.id);
-                const h = Math.max((item.end - item.start) * PX, 18);
+                const h = Math.max(y(item.end) - y(item.start), 18);
                 const compact = h < 30;
                 const short = !compact && h < 56; // time and name share the first line
                 // several bookings side by side in a narrow column: names only

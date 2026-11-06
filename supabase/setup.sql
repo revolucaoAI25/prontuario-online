@@ -24,7 +24,7 @@ $$;
 
 -- Limpa uma tentativa anterior (só objetos deste sistema, no schema public).
 drop view if exists public.stock_levels, public.whatsapp_conversations cascade;
-drop table if exists public.admin_notes, public.admin_tasks, public.agenda_blocks, public.agenda_hours, public.agenda_slot_times, public.agendas, public.appointment_procedures, public.appointment_types, public.appointments, public.birthday_messages, public.chat_channel_members, public.chat_channels, public.chat_messages, public.chat_reads, public.employee_vacations, public.employees, public.expenses, public.finance_pin, public.finance_pin_attempts, public.no_show_alerts, public.note_shortcuts, public.patient_legacy_aliases, public.patient_not_duplicates, public.patients, public.payments, public.private, public.procedures, public.record_attachments, public.record_entries, public.reminder_recalc_queue, public.reminders, public.settings, public.staff, public.stock_movements, public.stock_products, public.stock_sectors, public.whatsapp_messages, public.whatsapp_reads cascade;
+drop table if exists public.admin_notes, public.admin_tasks, public.agenda_blocks, public.agenda_hours, public.agenda_slot_times, public.agendas, public.appointment_procedures, public.appointment_types, public.appointments, public.birthday_messages, public.chat_channel_members, public.chat_channels, public.chat_messages, public.chat_reads, public.employee_vacations, public.employees, public.expenses, public.finance_pin, public.finance_pin_attempts, public.no_show_alerts, public.note_shortcuts, public.patient_legacy_aliases, public.patient_not_duplicates, public.patients, public.payments, public.private, public.procedures, public.record_attachments, public.record_entries, public.reminder_recalc_queue, public.reminders, public.settings, public.staff, public.staff_finance_pins, public.stock_movements, public.stock_products, public.stock_sectors, public.whatsapp_messages, public.whatsapp_reads cascade;
 drop type if exists public.appointment_status, public.payment_method, public.payment_status, public.reminder_status, public.staff_role, public.stock_movement_type cascade;
 do $$
 declare
@@ -2584,6 +2584,212 @@ set chat_muted_channels = coalesce(
 where s.agenda_id is not null;
 
 -- ---------------------------------------------------------------------
+-- supabase/migrations/20261106000017_finance_per_person.sql
+-- ---------------------------------------------------------------------
+
+-- Financeiro, 06/11:
+--  * each person has their own 4-digit password (Dr. Everson sets them in
+--    Ajustes → Financeiro); the old single password still works for whoever
+--    has no password of their own;
+--  * once anyone has a password of their own, a secretary without one (and
+--    without the old single password) cannot open the Financeiro;
+--  * the reception sees every agenda except Dr. Everson's (Simone's opens to
+--    the reception too).
+
+create table staff_finance_pins (
+    staff_id uuid primary key references staff (id) on delete cascade,
+    pin_hash text not null,
+    updated_at timestamptz not null default now()
+);
+-- No policies: read and written only through the functions below.
+alter table staff_finance_pins enable row level security;
+
+-- 'ok', 'errada', 'aguarde' (5 misses in 10 minutes) or 'sem_senha' (this
+-- person has no password and others do: ask Dr. Everson for one).
+create or replace function check_finance_pin(p_pin text) returns text
+language plpgsql security definer set search_path = public, extensions as $$
+declare
+    v_hash text;
+begin
+    if not is_reception() then raise exception 'acesso_negado'; end if;
+    select pin_hash into v_hash from staff_finance_pins where staff_id = auth.uid();
+    if v_hash is null then
+        select pin_hash into v_hash from finance_pin;
+    end if;
+    if v_hash is null then
+        if is_admin() or not exists (select 1 from staff_finance_pins) then return 'ok'; end if;
+        return 'sem_senha';
+    end if;
+    if (select count(*) from finance_pin_attempts
+        where staff_id = auth.uid() and attempted_at > now() - interval '10 minutes') >= 5 then
+        return 'aguarde';
+    end if;
+    if crypt(coalesce(p_pin, ''), v_hash) = v_hash then
+        delete from finance_pin_attempts where staff_id = auth.uid();
+        return 'ok';
+    end if;
+    insert into finance_pin_attempts (staff_id) values (auth.uid());
+    return 'errada';
+end;
+$$;
+
+-- Admin: set (4 digits) or remove (null) someone's password.
+create function set_staff_finance_pin(p_staff_id uuid, p_pin text) returns void
+language plpgsql security definer set search_path = public, extensions as $$
+begin
+    if not is_admin() then raise exception 'acesso_negado'; end if;
+    if not exists (
+        select 1 from staff s
+        where s.id = p_staff_id and s.role in ('admin', 'secretaria')
+          and (not s.is_superadmin or is_superadmin())
+    ) then
+        raise exception 'usuario_invalido';
+    end if;
+    if p_pin is null or p_pin = '' then
+        delete from staff_finance_pins where staff_id = p_staff_id;
+    else
+        if p_pin !~ '^[0-9]{4}$' then raise exception 'senha_invalida'; end if;
+        insert into staff_finance_pins (staff_id, pin_hash) values (p_staff_id, crypt(p_pin, gen_salt('bf')))
+        on conflict (staff_id) do update set pin_hash = excluded.pin_hash, updated_at = now();
+    end if;
+    delete from finance_pin_attempts where staff_id = p_staff_id;
+end;
+$$;
+
+-- Admin: who can open the Financeiro, and who already has a password.
+create function finance_pin_people()
+returns table (staff_id uuid, full_name text, role staff_role, has_pin boolean, updated_at timestamptz)
+language sql stable security definer set search_path = public as $$
+    select s.id, s.full_name, s.role, p.staff_id is not null, p.updated_at
+    from staff s
+    left join staff_finance_pins p on p.staff_id = s.id
+    where is_admin() and s.active and s.role in ('admin', 'secretaria')
+      and (not s.is_superadmin or is_superadmin())
+    order by s.role, s.full_name
+$$;
+
+-- Admin: whether the old single password exists, and removing it.
+create function finance_general_pin_is_set() returns boolean
+language sql stable security definer set search_path = public as $$
+    select is_admin() and exists (select 1 from finance_pin)
+$$;
+
+create function remove_general_finance_pin() returns void
+language plpgsql security definer set search_path = public as $$
+begin
+    if not is_admin() then raise exception 'acesso_negado'; end if;
+    delete from finance_pin;
+end;
+$$;
+
+-- The reception sees every agenda except Dr. Everson's.
+update agendas set finance_shared = true where name = 'Simone Rezeck';
+
+-- ---------------------------------------------------------------------
+-- supabase/migrations/20261106000018_agenda_hours_0611.sql
+-- ---------------------------------------------------------------------
+
+-- Hours sent by Dr. Everson on 06/11 (they win over the ones of 05/11):
+--
+--   afternoons start at 13:30 in every agenda, Monday to Friday;
+--   mornings start at 8:30 and open only on:
+--     Dr. Everson and Simone ...... Wednesday and Saturday
+--     Depilação ................... Wednesday, Friday and Saturday
+--     Estética .................... Tuesday, Wednesday and Saturday
+--
+-- Closing times stay as they were. Where an agenda works with fixed start
+-- times, the times outside the new windows go away and the new half hours
+-- (8:30, 13:00-15:00 gaps) are added on its 30-minute rhythm. Bookings
+-- already made are not touched. On a fresh install (no agendas yet) this does
+-- nothing.
+
+do $$
+declare
+    r record;
+    v_agenda uuid;
+    v_morning_days integer[];
+    v_first time;
+    d integer;
+begin
+    for r in select * from (values
+        ('Dr. Everson Rezeck', array[3, 6]),
+        ('Simone Rezeck', array[3, 6]),
+        ('Depilação a laser', array[3, 5, 6]),
+        ('Estética', array[2, 3, 6])
+    ) as t(name, morning_days)
+    loop
+        v_agenda := (select id from agendas where name = r.name);
+        continue when v_agenda is null;
+        v_morning_days := r.morning_days;
+
+        for d in 1..6 loop
+            -- Mornings (windows starting before noon).
+            if not (d = any (v_morning_days)) then
+                delete from agenda_slot_times where agenda_id = v_agenda and weekday = d and start_time < '12:00';
+                -- a window running from morning into the afternoon keeps its afternoon
+                update agenda_hours set start_time = '13:30'
+                where agenda_id = v_agenda and weekday = d and start_time < '12:00' and end_time > '13:30';
+                delete from agenda_hours where agenda_id = v_agenda and weekday = d and start_time < '12:00';
+            elsif exists (select 1 from agenda_hours where agenda_id = v_agenda and weekday = d and start_time < '12:00') then
+                select min(start_time) into v_first from agenda_slot_times where agenda_id = v_agenda and weekday = d and start_time < '12:00';
+                -- Fixed times: drop the ones before 8:30, fill 8:30 up to the first one.
+                if v_first is not null then
+                    delete from agenda_slot_times where agenda_id = v_agenda and weekday = d and start_time < '08:30';
+                    insert into agenda_slot_times (agenda_id, weekday, start_time)
+                    select v_agenda, d, t::time from generate_series(timestamp '2000-01-01 08:30', timestamp '2000-01-01 00:00' + v_first - interval '1 minute', interval '30 minutes') t
+                    on conflict do nothing;
+                    if not exists (select 1 from agenda_slot_times where agenda_id = v_agenda and weekday = d and start_time < '12:00') then
+                        insert into agenda_slot_times values (v_agenda, d, '08:30') on conflict do nothing;
+                    end if;
+                end if;
+                update agenda_hours set start_time = '08:30' where agenda_id = v_agenda and weekday = d and start_time < '12:00';
+            else
+                -- A new morning: 8:30 to 12:00, on the agenda's 30-minute rhythm
+                -- when it works with fixed times.
+                insert into agenda_hours (agenda_id, weekday, start_time, end_time) values (v_agenda, d, '08:30', '12:00');
+                if exists (select 1 from agenda_slot_times where agenda_id = v_agenda and weekday = d) then
+                    insert into agenda_slot_times (agenda_id, weekday, start_time)
+                    select v_agenda, d, t::time from generate_series(timestamp '2000-01-01 08:30', timestamp '2000-01-01 11:30', interval '30 minutes') t
+                    on conflict do nothing;
+                end if;
+            end if;
+
+            -- Afternoons (Monday to Friday): start at 13:30.
+            if d between 1 and 5 then
+                select min(start_time) into v_first from agenda_slot_times where agenda_id = v_agenda and weekday = d and start_time >= '12:00';
+                if v_first is not null and v_first > '13:30' then
+                    insert into agenda_slot_times (agenda_id, weekday, start_time)
+                    select v_agenda, d, t::time from generate_series(timestamp '2000-01-01 13:30', timestamp '2000-01-01 00:00' + v_first - interval '1 minute', interval '30 minutes') t
+                    on conflict do nothing;
+                end if;
+                update agenda_hours set start_time = '13:30'
+                where agenda_id = v_agenda and weekday = d and start_time >= '12:00' and start_time <> '13:30';
+            end if;
+        end loop;
+    end loop;
+
+    -- Estética on Saturday: the same one-hour rhythm as the week (8:30 to 13:30).
+    v_agenda := (select id from agendas where name = 'Estética');
+    if v_agenda is not null and exists (select 1 from agenda_slot_times where agenda_id = v_agenda and weekday = 6) then
+        delete from agenda_slot_times where agenda_id = v_agenda and weekday = 6;
+        insert into agenda_slot_times (agenda_id, weekday, start_time)
+        select v_agenda, 6, t::time
+        from generate_series(timestamp '2000-01-01 08:30', timestamp '2000-01-01 00:00' + (select max(end_time) from agenda_hours where agenda_id = v_agenda and weekday = 6) - interval '60 minutes', interval '60 minutes') t;
+    end if;
+end;
+$$;
+
+-- ---------------------------------------------------------------------
+-- supabase/migrations/20261106000019_block_series.sql
+-- ---------------------------------------------------------------------
+
+-- Recurring blocks: a block that repeats is stored as one row per day, all
+-- with the same series_id, so availability (and the WhatsApp agent) needs no
+-- change and one day can still be unblocked on its own.
+alter table agenda_blocks add column series_id uuid;
+create index agenda_blocks_series_idx on agenda_blocks (series_id) where series_id is not null;
+
+-- ---------------------------------------------------------------------
 -- supabase/seed.sql
 -- ---------------------------------------------------------------------
 
@@ -2592,11 +2798,10 @@ where s.agenda_id is not null;
 -- 14h for the two doctors' squeeze-ins) to be adjusted in Ajustes.
 -- Colors are the clinic's palette: azul-aço, âmbar, verde-folha, rosa-forte.
 
--- The reception sees the takings of Estética and Depilação (commissions),
--- not those of the two doctors.
+-- The reception sees the takings of every agenda except Dr. Everson's.
 insert into agendas (name, color, slot_step_minutes, sort_order, finance_shared) values
     ('Dr. Everson Rezeck', '#6F8FB8', 20, 1, false),
-    ('Simone Rezeck', '#E8B86D', 20, 2, false),
+    ('Simone Rezeck', '#E8B86D', 20, 2, true),
     ('Estética', '#8CBF9A', 30, 3, true),
     ('Depilação a laser', '#E58FA9', 30, 4, true);
 

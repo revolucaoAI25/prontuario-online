@@ -682,3 +682,18 @@ body.focus-mode .record-head .avatar.lg { width: 40px; height: 40px; font-size: 
   .legend { padding-bottom: 6px; }
   .rail-btn .bubble { min-width: 22px; height: 22px; font-size: 11px; }
 }
+
+/* Financeiro passwords per person; payment methods of the day. */
+.pin-row { padding: 12px 0; border-top: 1px solid var(--border); }
+.pin-row:first-of-type { border-top: 0; }
+.method-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.method-chip { display: flex; flex-direction: column; gap: 2px; padding: 8px 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-2); min-width: 130px; }
+
+/* Hours nobody works collapse into a thin band in the agenda. */
+.grid-gap { position: absolute; left: 0; right: 0; z-index: 0; pointer-events: none;
+  background: repeating-linear-gradient(-45deg, var(--bg), var(--bg) 4px, #ece6dc 4px, #ece6dc 8px);
+  border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+.time-gap { position: absolute; left: 0; right: 0; background: var(--bg); border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+.time-label { z-index: 2; }
+.time-label.after-gap { transform: translateY(2px); font-weight: 700; color: var(--ink-2); }
+

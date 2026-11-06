@@ -44,9 +44,9 @@ const summary = (user) => asUser(db, user, async () => (await one(db, `select fi
 const visibleAmounts = (user) =>
   asUser(db, user, async () => (await db.query(`select amount::int from payments order by amount`)).rows.map((r) => r.amount));
 
-test('only Estética and Depilação are shared with the reception by default', async () => {
+test('every agenda except Dr. Everson’s is shared with the reception by default', async () => {
   const { rows } = await db.query(`select name from agendas where finance_shared order by name`);
-  assert.deepEqual(rows.map((r) => r.name), ['Depilação a laser', 'Estética']);
+  assert.deepEqual(rows.map((r) => r.name), ['Depilação a laser', 'Estética', 'Simone Rezeck']);
 });
 
 test('a payment for a visit takes the visit agenda', async () => {
@@ -60,8 +60,8 @@ test('a payment for a visit takes the visit agenda', async () => {
 
 test('the reception records any payment but reads only the shared agendas', async () => {
   assert.deepEqual(await visibleAmounts(admin), [260, 300, 800, 1500]);
-  assert.deepEqual(await visibleAmounts(secretaria), [260, 300]);
-  assert.deepEqual(await visibleAmounts(simone), [260, 300], 'professionals do not see the doctors either');
+  assert.deepEqual(await visibleAmounts(secretaria), [260, 300, 800]);
+  assert.deepEqual(await visibleAmounts(simone), [260, 300, 800], 'professionals do not see Dr. Everson either');
 
   const hidden = (await one(db, `select id from payments where amount = 1500`)).id;
   const changed = await asUser(db, secretaria, async () => (await db.query(`update payments set amount = 1 where id = $1`, [hidden])).rowCount);
@@ -78,20 +78,20 @@ test('the daily close: per agenda for the admin, shared agendas only for the rec
   assert.deepEqual(mine.por_agenda.map((a) => a.nome), ['Dr. Everson Rezeck', 'Simone Rezeck', 'Estética', 'Depilação a laser']);
 
   const reception = await summary(secretaria);
-  assert.equal(Number(reception.total_pago), 560);
-  assert.deepEqual(reception.por_agenda.map((a) => a.nome), ['Estética', 'Depilação a laser']);
+  assert.equal(Number(reception.total_pago), 1360);
+  assert.deepEqual(reception.por_agenda.map((a) => a.nome), ['Simone Rezeck', 'Estética', 'Depilação a laser']);
   assert.ok(!JSON.stringify(reception).includes('1500'), 'the hidden total does not leave the database');
 
   await expectDbError(asUser(db, simone, () => db.query(`select finance_summary(clinic_today(), clinic_today())`)), 'acesso_negado');
 });
 
-test('turning sharing on in Ajustes shows that agenda to the reception', async () => {
-  await asUser(db, admin, () => db.query(`update agendas set finance_shared = true where id = $1`, [agenda.simone]));
-  assert.deepEqual(await visibleAmounts(secretaria), [260, 300, 800]);
+test('turning sharing off and on in Ajustes changes what the reception sees', async () => {
   await asUser(db, admin, () => db.query(`update agendas set finance_shared = false where id = $1`, [agenda.simone]));
+  assert.deepEqual(await visibleAmounts(secretaria), [260, 300]);
+  await asUser(db, admin, () => db.query(`update agendas set finance_shared = true where id = $1`, [agenda.simone]));
   const flipped = await asUser(db, secretaria, async () => (await db.query(`update agendas set finance_shared = true where id = $1`, [agenda.everson])).rowCount);
   assert.equal(flipped, 0, 'only the admin changes what the reception sees');
-  assert.deepEqual(await visibleAmounts(secretaria), [260, 300]);
+  assert.deepEqual(await visibleAmounts(secretaria), [260, 300, 800]);
 });
 
 test('an archived agenda shows up in the report only when it has money in the period', async () => {

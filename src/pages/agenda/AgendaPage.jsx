@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { CalendarDays, ChevronLeft, ChevronRight, List, Lock, Plus } from 'lucide-react';
+import { CalendarDays, ChevronLeft, ChevronRight, Clock, List, Lock, Plus } from 'lucide-react';
 import { supabase } from '../../lib/supabase.js';
 import { useLoad, useInterval } from '../../lib/hooks.js';
 import { useToast } from '../../context/ToastContext.jsx';
@@ -13,7 +13,8 @@ import { TimeGrid } from './TimeGrid.jsx';
 import { MonthGrid, monthDays } from './MonthGrid.jsx';
 import { AppointmentSheet } from './AppointmentSheet.jsx';
 import { AppointmentModal } from './AppointmentModal.jsx';
-import { BlockModal } from './BlockModal.jsx';
+import { BlockModal, UnblockModal } from './BlockModal.jsx';
+import { OpenHoursModal } from './OpenHoursModal.jsx';
 import { defaultType, loadAgendas, loadRange, openWindows, proceduresOf } from './agendaData.js';
 
 const VIEWS = [['dia', 'Dia'], ['semana', 'Semana'], ['mes', 'Mês']];
@@ -64,7 +65,7 @@ function step(view, day, direction) {
 
 export function AgendaPage() {
   const toast = useToast();
-  const { staff } = useAuth();
+  const { staff, isAdmin } = useAuth();
   const [day, setDay] = useState(localDay());
   const [view, setViewState] = useState(() => remembered('agenda.view', 'dia'));
   const [asList, setAsList] = useState(false);
@@ -73,11 +74,13 @@ export function AgendaPage() {
   const [openId, setOpenId] = useState(null);
   const [creating, setCreating] = useState(null);
   const [blocking, setBlocking] = useState(false);
+  const [unblocking, setUnblocking] = useState(null);
+  const [opening, setOpening] = useState(false);
 
   const setView = (v) => { setViewState(v); remember('agenda.view', v); };
   const [from, to] = rangeFor(view, day);
 
-  const { data: agendas = [] } = useLoad(loadAgendas, []);
+  const { data: agendas = [], reload: reloadAgendas } = useLoad(loadAgendas, []);
   const { data: range, reload } = useLoad(() => loadRange(from, to), [from, to]);
 
   // Default selection: the professional's own agenda, otherwise all.
@@ -137,13 +140,7 @@ export function AgendaPage() {
     });
   }
 
-  async function removeBlock(block) {
-    // eslint-disable-next-line no-alert
-    if (!window.confirm(`Desbloquear este horário${block.reason ? ` (${block.reason})` : ''}?`)) return;
-    const { error } = await supabase.from('agenda_blocks').delete().eq('id', block.id);
-    if (error) return toast.error(error);
-    reload();
-  }
+  const removeBlock = (block) => setUnblocking(block);
 
   const openDay = (d) => { setDay(d); setView('dia'); };
   const goToday = () => setDay(localDay());
@@ -215,6 +212,7 @@ export function AgendaPage() {
           <div className="sub">{view === 'mes' ? subtitle : `${activeCount} ${activeCount === 1 ? 'atendimento' : 'atendimentos'} ${view === 'semana' ? 'na semana' : 'no dia'}`}</div>
         </div>
         <div className="topbar-right">
+          {isAdmin && <button type="button" className="btn" onClick={() => setOpening(true)} title="Abrir horário"><Clock /> <span className="hide-phone">Abrir horário</span></button>}
           <button type="button" className="btn" onClick={() => setBlocking(true)} title="Bloquear horário"><Lock /> <span className="hide-phone">Bloquear horário</span></button>
           <button type="button" className="btn btn-primary" onClick={() => setCreating({ day: view === 'dia' ? day : localDay() >= from && localDay() < to ? localDay() : from, time: '09:00', agendaId: visibleAgendas[0]?.id })}>
             <Plus /> Agendar
@@ -320,6 +318,8 @@ export function AgendaPage() {
           onSaved={() => { setCreating(null); reload(); }}
         />
       )}
+      {unblocking && <UnblockModal block={unblocking} onClose={() => setUnblocking(null)} onDone={() => { setUnblocking(null); reload(); }} />}
+      {opening && <OpenHoursModal agendas={agendas} onClose={() => setOpening(false)} onSaved={() => { setOpening(false); reloadAgendas(); }} />}
       {blocking && <BlockModal agendas={agendas} day={view === 'dia' ? day : from} onClose={() => setBlocking(false)} onSaved={() => { setBlocking(false); reload(); }} />}
     </div>
   );

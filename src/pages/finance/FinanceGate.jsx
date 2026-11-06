@@ -3,6 +3,7 @@ import { Lock, MonitorSmartphone } from 'lucide-react';
 import { supabase } from '../../lib/supabase.js';
 import { isMobileDevice } from '../../lib/device.js';
 import { Empty } from '../../components/ui.jsx';
+import { useAuth } from '../../context/AuthContext.jsx';
 
 const KEY = 'financeiro.liberado';
 const IDLE_MS = 30 * 60 * 1000; // asks again after 30 minutes away from it
@@ -18,11 +19,13 @@ function remember() {
   try { sessionStorage.setItem(KEY, String(Date.now())); } catch { /* asks every time */ }
 }
 
-// The Financeiro screen opens only on a computer, and only with the
-// four-digit password Dr. Everson keeps (set in Ajustes → Financeiro). The
-// figures themselves are protected by the database; this is the door.
+// The Financeiro opens with each person's four-digit password (set by Dr.
+// Everson in Ajustes → Financeiro). On a phone it opens only for the
+// administrator. The figures themselves are protected by the database; this
+// is the door.
 export function FinanceGate({ children }) {
-  const [state, setState] = useState(() => (isMobileDevice() ? 'mobile' : unlockedRecently() ? 'open' : 'locked'));
+  const { isAdmin } = useAuth();
+  const [state, setState] = useState(() => (unlockedRecently() ? 'open' : 'locked'));
   const [pin, setPin] = useState('');
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
@@ -44,7 +47,9 @@ export function FinanceGate({ children }) {
     if (error) return setMessage('Não foi possível conferir a senha. Tente de novo.');
     if (data === 'ok') return setState('open');
     setPin('');
-    setMessage(data === 'aguarde' ? 'Muitas tentativas. Espere 10 minutos e tente de novo.' : 'Senha errada.');
+    setMessage(data === 'aguarde' ? 'Muitas tentativas. Espere 10 minutos e tente de novo.'
+      : data === 'sem_senha' ? 'Você ainda não tem senha do Financeiro. Peça ao Dr. Everson para criar (Ajustes → Financeiro).'
+        : 'Senha errada.');
     input.current?.focus();
     return null;
   }
@@ -56,7 +61,7 @@ export function FinanceGate({ children }) {
     if (value.length === 4) submit(value);
   }
 
-  if (state === 'mobile') {
+  if (isMobileDevice() && !isAdmin) {
     return <Empty icon={MonitorSmartphone}>O Financeiro abre só no computador da clínica.</Empty>;
   }
   if (state === 'open') return children;
@@ -65,7 +70,7 @@ export function FinanceGate({ children }) {
       <div className="card card-pad pin-card">
         <Lock />
         <h2>Financeiro</h2>
-        <div className="small muted">Digite a senha de 4 números.</div>
+        <div className="small muted">Digite a sua senha de 4 números.</div>
         <input
           ref={input}
           className="input pin-input"

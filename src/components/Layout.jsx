@@ -163,7 +163,8 @@ export function Layout() {
   const unread = { whatsapp: useUnreadWhatsApp(staff?.mute_whatsapp), tasks: useDueTasks(isReception) };
   const mobile = isMobileDevice();
   useEffect(() => { installSoundUnlock(); }, []);
-  const visible = (item) => (item.admin ? isAdmin : item.reception ? isReception : true) && !(item.desktop && mobile);
+  // Financeiro on a phone: only the administrator.
+  const visible = (item) => (item.admin ? isAdmin : item.reception ? isReception : true) && !(item.desktop && mobile && !isAdmin);
   return (
     <div className="app">
       <aside className="rail">
