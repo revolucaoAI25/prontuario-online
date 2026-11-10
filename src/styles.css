@@ -413,6 +413,12 @@ input[type='checkbox'], input[type='radio'] { accent-color: var(--brand); width:
 .entry::before { content: ''; position: absolute; left: -5px; top: 18px; width: 8px; height: 8px; border-radius: 99px; background: var(--surface); border: 2px solid var(--brand); }
 .entry-top { display: flex; align-items: baseline; gap: 10px; }
 .entry-date { font-weight: 700; font-size: 12.5px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+/* Several entries on the same day: the date once, then a "+" for each. */
+.entry.same-day { padding-top: 0; }
+.entry.same-day::before { display: none; }
+.entry.same-day .entry-top { position: absolute; right: 0; top: 0; }
+.entry.same-day .entry-text { margin-top: 0; }
+.entry-plus { font-weight: 800; color: var(--brand); }
 .entry-text { white-space: pre-wrap; font-size: 14px; color: var(--ink); margin-top: 4px; overflow-wrap: anywhere; line-height: 1.55; }
 .entry-actions { margin-left: auto; display: flex; gap: 4px; opacity: 0; transition: opacity 0.15s; }
 .entry:hover .entry-actions { opacity: 1; }

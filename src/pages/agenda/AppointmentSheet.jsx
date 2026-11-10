@@ -231,10 +231,10 @@ export function AppointmentSheet({ appointment, agendas, onClose, onChanged }) {
           <div className="card card-pad">
             <div className="section-title">Últimos registros do prontuário</div>
             {context?.entries.length === 0 && <div className="small muted">Nenhum registro.</div>}
-            {context?.entries.map((e) => (
+            {context?.entries.map((e, i) => (
               <div key={e.id} className="side-item">
-                <div className="entry-date">{formatDay(localDay(e.entry_at))}</div>
-                <div className="sheet-note">{e.content}</div>
+                {!(i > 0 && localDay(context.entries[i - 1].entry_at) === localDay(e.entry_at)) && <div className="entry-date">{formatDay(localDay(e.entry_at))}</div>}
+                <div className="sheet-note">{i > 0 && localDay(context.entries[i - 1].entry_at) === localDay(e.entry_at) && <span className="entry-plus">+ </span>}{e.content}</div>
               </div>
             ))}
           </div>

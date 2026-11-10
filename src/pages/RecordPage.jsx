@@ -118,7 +118,9 @@ function Composer({ patientId, shortcuts, onSaved, focus, onToggleFocus }) {
   );
 }
 
-function Entry({ entry, canEdit, onChanged }) {
+// sameDay: another entry of the same day is right above it (several sectors
+// writing on the same visit), so it shows a "+" instead of repeating the date.
+function Entry({ entry, canEdit, onChanged, sameDay = false }) {
   const toast = useToast();
   const [editing, setEditing] = useState(false);
   const [text, setText] = useState(entry.content);
@@ -145,9 +147,9 @@ function Entry({ entry, canEdit, onChanged }) {
   }
 
   return (
-    <div className="entry" data-testid="record-entry">
+    <div className={`entry ${sameDay ? 'same-day' : ''}`} data-testid="record-entry">
       <div className="entry-top">
-        <span className="entry-date">{formatDay(localDay(entry.entry_at))}</span>
+        {!sameDay && <span className="entry-date">{formatDay(localDay(entry.entry_at))}</span>}
         {canEdit && !editing && (
           <span className="entry-actions">
             <button type="button" className="icon-btn" onClick={() => setEditing(true)} aria-label="Editar"><Pencil /></button>
@@ -164,7 +166,7 @@ function Entry({ entry, canEdit, onChanged }) {
           </div>
         </div>
       ) : (
-        <div className="entry-text">{entry.content}</div>
+        <div className="entry-text">{sameDay && <span className="entry-plus" title={`Também em ${formatDay(localDay(entry.entry_at))}`}>+ </span>}{entry.content}</div>
       )}
       {entry.record_attachments?.length > 0 && (
         <div className="row-wrap" style={{ marginTop: 6 }}>
@@ -285,8 +287,9 @@ export function RecordPage() {
             )}
           </div>
           <div className="timeline scroll">
-            {shown.map((entry) => (
-              <Entry key={entry.id} entry={entry} canEdit={isAdmin || entry.author_id === staff?.id} onChanged={entriesLoad.reload} />
+            {shown.map((entry, i) => (
+              <Entry key={entry.id} entry={entry} canEdit={isAdmin || entry.author_id === staff?.id} onChanged={entriesLoad.reload}
+                sameDay={i > 0 && localDay(shown[i - 1].entry_at) === localDay(entry.entry_at)} />
             ))}
             {entriesLoad.data && shown.length === 0 && <Empty>{filter ? 'Nada encontrado.' : 'Nenhum registro ainda.'}</Empty>}
           </div>
