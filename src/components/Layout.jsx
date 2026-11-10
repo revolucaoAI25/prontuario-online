@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { NavLink, Outlet } from 'react-router-dom';
 import {
-  CalendarDays, Users, FileText, Wallet, Package, MessagesSquare, MessageCircle, BellRing, Settings, LogOut, ClipboardList, Contact,
+  CalendarDays, Users, FileText, Wallet, Package, MessagesSquare, MessageCircle, BellRing, Settings, LogOut, ClipboardList, Contact, Megaphone,
 } from 'lucide-react';
 import { supabase } from '../lib/supabase.js';
 import { useAuth } from '../context/AuthContext.jsx';
@@ -23,6 +23,7 @@ const NAV = [
   { to: '/financeiro', label: 'Financeiro', icon: Wallet, reception: true, desktop: true },
   { to: '/pessoal', label: 'Pessoal', icon: Contact, admin: true },
   { to: '/configuracoes', label: 'Ajustes', icon: Settings, admin: true },
+  { to: '/disparos', label: 'Disparos', icon: Megaphone, superadmin: true },
 ];
 
 // Unread internal-chat messages per group, with the group's color. Every new
@@ -158,13 +159,13 @@ function ChatBubbles({ list }) {
 }
 
 export function Layout() {
-  const { staff, isAdmin, isReception, signOut } = useAuth();
+  const { staff, isAdmin, isReception, isSuperAdmin, signOut } = useAuth();
   const chat = useUnreadChat(staff?.id, staff?.mute_chat, staff?.chat_muted_channels);
   const unread = { whatsapp: useUnreadWhatsApp(staff?.mute_whatsapp), tasks: useDueTasks(isReception) };
   const mobile = isMobileDevice();
   useEffect(() => { installSoundUnlock(); }, []);
   // Financeiro on a phone: only the administrator.
-  const visible = (item) => (item.admin ? isAdmin : item.reception ? isReception : true) && !(item.desktop && mobile && !isAdmin);
+  const visible = (item) => (item.superadmin ? isSuperAdmin : item.admin ? isAdmin : item.reception ? isReception : true) && !(item.desktop && mobile && !isAdmin);
   return (
     <div className="app">
       <aside className="rail">

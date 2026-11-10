@@ -228,3 +228,37 @@ export async function isDatabaseCronToken(token) {
   if (!expected || expected.length !== token.length) return false;
   return timingSafeEqual(Buffer.from(expected), Buffer.from(token));
 }
+
+// Campaigns ("Disparos"): each claimed message goes to its campaign's own
+// webhook. The database keeps the pace (one message per campaign per claim).
+export async function dispatchCampaigns({ deadline = Date.now() + 50_000 } = {}) {
+  const result = { enviados: 0, falhas: 0 };
+  while (Date.now() < deadline) {
+    const { rows } = await query(`select * from claim_campaign_messages()`);
+    if (rows.length === 0) break;
+    const contexts = await patientContexts(rows.map((r) => r.patient_id));
+    await inPool(rows, async (row) => {
+      const ctx = contexts.get(row.patient_id);
+      try {
+        if (!ctx) throw new Error('paciente não encontrado');
+        await postWebhook(row.webhook_url, {
+          tipo: 'campanha',
+          campanha: { id: row.campaign_id, nome: row.campaign_name, mensagem: row.campaign_message ?? null },
+          envio_id: row.recipient_id,
+          tentativa: row.attempts,
+          paciente: ctx.paciente,
+          agendamentos_futuros: ctx.agendamentos_futuros,
+          retornos_pendentes: ctx.retornos_pendentes,
+          historico: ctx.historico,
+          resumo: ctx.resumo,
+        });
+        await query(`select mark_campaign_sent($1)`, [row.recipient_id]);
+        result.enviados++;
+      } catch (error) {
+        await query(`select mark_campaign_failed($1, $2)`, [row.recipient_id, error.message]);
+        result.falhas++;
+      }
+    });
+  }
+  return result;
+}

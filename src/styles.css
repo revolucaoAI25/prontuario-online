@@ -711,3 +711,17 @@ body.focus-mode .record-head .avatar.lg { width: 40px; height: 40px; font-size: 
 .agenda-col .opening-tag i { width: 7px; height: 7px; border-radius: 99px; flex: none; }
 .agenda-col .opening-tag:focus-visible { outline: 2px solid var(--brand); outline-offset: 1px; }
 
+/* Disparos (campaigns). */
+.campaign-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); gap: 14px; }
+.campaign-card .meter > div { transition: width 0.4s; }
+.cadence-line { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; font-size: 14px; }
+.cadence-line .input { width: 92px; }
+.cadence-line .input[type=time] { width: 116px; }
+.audience-box { border: 1px solid var(--border); border-radius: 12px; padding: 12px; background: var(--surface-2); }
+.audience-list { max-height: 300px; overflow-y: auto; margin-top: 10px; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; }
+.audience-row { display: flex; align-items: center; gap: 10px; padding: 6px 10px; border-bottom: 1px solid #f1ede7; font-size: 13.5px; }
+.audience-row:last-child { border-bottom: 0; }
+.audience-row.out .grow { text-decoration: line-through; color: var(--ink-mute); }
+.chip.muted { opacity: 0.55; text-decoration: line-through; }
+@media (max-width: 700px) { .campaign-grid { grid-template-columns: minmax(0, 1fr); } }
+

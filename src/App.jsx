@@ -14,10 +14,16 @@ import { ChatPage } from './pages/ChatPage.jsx';
 import { ConversationsPage } from './pages/ConversationsPage.jsx';
 import { RemindersPage } from './pages/RemindersPage.jsx';
 import { SettingsPage } from './pages/settings/SettingsPage.jsx';
+import { CampaignsPage } from './pages/CampaignsPage.jsx';
 
 function AdminOnly({ children }) {
   const { isAdmin } = useAuth();
   return isAdmin ? children : <Navigate to="/agenda" replace />;
+}
+
+function SuperAdminOnly({ children }) {
+  const { isSuperAdmin } = useAuth();
+  return isSuperAdmin ? children : <Navigate to="/agenda" replace />;
 }
 
 function ReceptionOnly({ children }) {
@@ -46,6 +52,7 @@ export function App() {
         <Route path="/administrativo" element={<ReceptionOnly><AdminPage /></ReceptionOnly>} />
         <Route path="/pessoal" element={<AdminOnly><PeoplePage /></AdminOnly>} />
         <Route path="/configuracoes" element={<AdminOnly><SettingsPage /></AdminOnly>} />
+        <Route path="/disparos" element={<SuperAdminOnly><CampaignsPage /></SuperAdminOnly>} />
         <Route path="*" element={<Navigate to="/agenda" replace />} />
       </Route>
     </Routes>

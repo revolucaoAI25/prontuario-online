@@ -1,4 +1,4 @@
-# Webhooks de lembrete, aniversário e falta
+# Webhooks de lembrete, aniversário, falta e campanhas
 
 Todo dia às 9h (horário de Brasília) o sistema manda um `POST` com JSON para cada lembrete de
 retorno vencido e para cada aniversariante do dia, nas URLs configuradas em
@@ -256,3 +256,42 @@ Falhas: nova tentativa em 10, 20, 40 e 80 minutos (5 no total) — a mesma regra
 
 Para remarcar a partir daqui, o fluxo usa a API normal: `agenda/disponibilidade` e
 `agenda/remarcar` com `agendamento_id` = `agendamento.id` (ou `agenda/agendar` para um novo).
+
+## Campanhas (Disparos)
+
+Tela **Disparos** (só o super admin). Cada campanha tem **o seu webhook**: o sistema manda um `POST`
+por paciente para a URL daquela campanha, no ritmo escolhido. O fluxo (n8n, Chatflux…) escreve e envia
+a mensagem.
+
+- **Quem recebe:** a base filtrada (agenda em que foi atendido, procedimento feito, última visita,
+  aniversário no mês, idade, "sem nada marcado", busca por nome), menos os que você tirar, mais os que
+  incluir à mão; ou só os pacientes escolhidos. Quem pediu para não receber mensagens ou não tem
+  telefone **nunca** entra.
+- **Cadência:** "enviar N mensagens a cada X minutos", com um intervalo sorteado entre A e B segundos
+  entre uma e outra, só entre tal e tal hora, nos dias marcados (horário de Brasília). Ex.: 20 a cada 60
+  minutos, 30–60 s entre elas, das 9h às 19h, de segunda a sábado.
+- Iniciar, pausar, retomar e cancelar a qualquer momento. "Ver envios" mostra quem já recebeu, quem está
+  na fila e os erros; dá para tirar alguém da fila.
+- Falha (resposta fora de `2xx` ou 10 s sem resposta): tenta de novo 5 minutos depois, até 3 vezes.
+- Quem dispara é o próprio banco (Supabase, `pg_cron`), que confere a cada 10 segundos se há mensagem
+  na hora e chama `/api/cron/campanhas`. Iniciar uma campanha pela tela grava o endereço do sistema que
+  esse job usa.
+
+```json
+{
+  "tipo": "campanha",
+  "campanha": { "id": "…", "nome": "Retorno Estética novembro",
+                "mensagem": "Convidar para limpeza de pele com 15% de desconto até 30/11." },
+  "envio_id": "…",
+  "tentativa": 1,
+  "paciente": { "id": "…", "nome": "Juliana Gomes Lacerda", "primeiro_nome": "Juliana",
+                "telefone": "(31) 99743-9219", "whatsapp": "5531997439219", "…": "…" },
+  "agendamentos_futuros": [],
+  "retornos_pendentes": [],
+  "historico": { "total_atendimentos": 5, "…": "…" },
+  "resumo": "Juliana Gomes Lacerda, 29 anos. Paciente desde 2026, 5 atendimento(s); último em 26/10/2026…"
+}
+```
+
+`mensagem` é o texto livre da campanha (oferta, instrução para a IA). Com `WEBHOOK_SIGNING_SECRET`
+definido, também vem `x-clinica-assinatura`.
