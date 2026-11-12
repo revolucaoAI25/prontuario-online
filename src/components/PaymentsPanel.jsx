@@ -136,7 +136,7 @@ export function PaymentsPanel({ patientId, appointmentId, agendaId }) {
             {p.status === 'pendente'
               ? <button type="button" className="btn btn-sm" onClick={() => markPaid(p)}><Check /> Marcar pago</button>
               : <span className="tag ok">Pago</span>}
-            <button type="button" className="icon-btn ghost" onClick={() => edit(p)} aria-label="Editar lançamento" title="Editar"><Pencil /></button>
+            <button type="button" className="btn btn-sm btn-ghost" onClick={() => edit(p)} title="Editar valor, forma de pagamento..."><Pencil /> Editar</button>
             {isAdmin && <button type="button" className="icon-btn ghost" onClick={() => remove(p)} aria-label="Apagar lançamento" title="Apagar"><Trash2 /></button>}
           </div>
         ))}

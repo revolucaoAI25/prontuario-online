@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Check, ChevronLeft, ChevronRight, Lock } from 'lucide-react';
+import { Check, ChevronLeft, ChevronRight, Lock, Pencil } from 'lucide-react';
 import { supabase, must } from '../lib/supabase.js';
 import { useLoad } from '../lib/hooks.js';
 import { useAuth } from '../context/AuthContext.jsx';
@@ -8,6 +8,7 @@ import { useToast } from '../context/ToastContext.jsx';
 import { formatMoney, methodLabel } from '../lib/format.js';
 import { addDays, formatDay, formatFullDate, formatWeekday, localDay } from '../lib/time.js';
 import { Empty } from '../components/ui.jsx';
+import { PaymentEditModal } from '../components/PaymentEditModal.jsx';
 import { ExpensesTab } from './finance/ExpensesTab.jsx';
 import { usePeriod } from './finance/period.jsx';
 import { FinanceGate } from './finance/FinanceGate.jsx';
@@ -23,10 +24,10 @@ function AgendaDot({ color }) {
   return <i className="dot-sw" style={{ background: color ?? 'var(--border-strong)' }} />;
 }
 
-function PaymentsTable({ rows, onMarkPaid, showDay }) {
+function PaymentsTable({ rows, onMarkPaid, onEdit, showDay }) {
   return (
     <table className="table">
-      <thead><tr>{showDay && <th>Data</th>}<th>Paciente</th><th>Agenda</th><th>Descrição</th><th>Forma</th><th className="num">Valor</th><th>Situação</th></tr></thead>
+      <thead><tr>{showDay && <th>Data</th>}<th>Paciente</th><th>Agenda</th><th>Descrição</th><th>Forma</th><th className="num">Valor</th><th>Situação</th><th /></tr></thead>
       <tbody>
         {rows.map((p) => (
           <tr key={p.id}>
@@ -39,6 +40,7 @@ function PaymentsTable({ rows, onMarkPaid, showDay }) {
             <td>{p.status === 'pago' ? <span className="tag ok">Pago</span> : (
               <button type="button" className="btn btn-sm" onClick={() => onMarkPaid(p)}><Check /> Marcar pago</button>
             )}</td>
+            <td><button type="button" className="icon-btn ghost" onClick={() => onEdit(p)} aria-label="Editar lançamento" title="Editar valor, forma de pagamento..."><Pencil /></button></td>
           </tr>
         ))}
       </tbody>
@@ -69,6 +71,7 @@ function DailyClose() {
   const { data: rows = [], reload } = useLoad(() => paymentsFor(day, day), [day]);
   const { data: expenses = [] } = useLoad(() => must(supabase.from('expenses').select('*').eq('occurred_on', day).order('created_at')), [day]);
   const markPaid = useMarkPaid(() => { reload(); reloadSummary(); });
+  const [editing, setEditing] = useState(null);
 
   const received = Number(summary?.total_pago ?? 0);
   const spent = Number(summary?.despesas_total ?? 0);
@@ -135,7 +138,8 @@ function DailyClose() {
       <div className="close-lists">
         <div className="card">
           <div className="section-title" style={{ padding: '14px 14px 0' }}>Lançamentos do dia</div>
-          <PaymentsTable rows={rows} onMarkPaid={markPaid} />
+          <PaymentsTable rows={rows} onMarkPaid={markPaid} onEdit={setEditing} />
+          {editing && <PaymentEditModal payment={editing} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); reload(); reloadSummary(); }} />}
           {rows.length === 0 && <Empty>Nenhum lançamento neste dia.</Empty>}
         </div>
         <div className="card card-pad">
@@ -163,6 +167,7 @@ function PeriodReport() {
   const { data: rows = [], reload } = useLoad(() => paymentsFor(from, to), [from, to]);
   const { data: openPending = [], reload: reloadPending } = useLoad(() => must(supabase.from('payments').select('amount').eq('status', 'pendente')), []);
   const markPaid = useMarkPaid(() => { reload(); reloadSummary(); reloadPending(); });
+  const [editing, setEditing] = useState(null);
 
   const agendas = (summary?.por_agenda ?? []).filter((a) => a.agenda_id || Number(a.quantidade) > 0);
   const shown = rows.filter((r) => (statusFilter === 'todos' || r.status === statusFilter)
@@ -231,7 +236,8 @@ function PeriodReport() {
             ))}
           </div>
         </div>
-        <PaymentsTable rows={shown} onMarkPaid={markPaid} showDay />
+        <PaymentsTable rows={shown} onMarkPaid={markPaid} onEdit={setEditing} showDay />
+        {editing && <PaymentEditModal payment={editing} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); reload(); reloadSummary(); reloadPending(); }} />}
         {shown.length === 0 && <Empty>Nenhum lançamento no período.</Empty>}
       </div>
     </>
