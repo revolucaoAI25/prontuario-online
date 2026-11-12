@@ -28,12 +28,38 @@ export function useDebounced(value, delay = 250) {
   return debounced;
 }
 
+// Runs fn every ms while the page is visible; a hidden tab (the system left
+// open in the background) skips the ticks, and catches up once when it is
+// shown again. Live updates (realtime) keep flowing either way.
 export function useInterval(fn, ms) {
   const saved = useRef(fn);
   saved.current = fn;
   useEffect(() => {
     if (!ms) return undefined;
-    const id = setInterval(() => saved.current(), ms);
-    return () => clearInterval(id);
+    let missed = false;
+    const tick = () => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') { missed = true; return; }
+      saved.current();
+    };
+    const onVisible = () => {
+      if (document.visibilityState === 'visible' && missed) { missed = false; saved.current(); }
+    };
+    const id = setInterval(tick, ms);
+    document.addEventListener('visibilitychange', onVisible);
+    return () => { clearInterval(id); document.removeEventListener('visibilitychange', onVisible); };
   }, [ms]);
 }
+
+// fn, called at most once per burst: calls within ms of each other collapse
+// into one (a WhatsApp message brings sent/delivered/read updates in a row).
+export function useCoalesced(fn, ms = 600) {
+  const saved = useRef(fn);
+  saved.current = fn;
+  const timer = useRef(null);
+  useEffect(() => () => clearTimeout(timer.current), []);
+  return useCallback(() => {
+    clearTimeout(timer.current);
+    timer.current = setTimeout(() => saved.current(), ms);
+  }, [ms]);
+}
+

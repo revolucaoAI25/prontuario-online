@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { Suspense, useEffect, useRef, useState } from 'react';
 import { NavLink, Outlet } from 'react-router-dom';
 import {
   CalendarDays, Users, FileText, Wallet, Package, MessagesSquare, MessageCircle, BellRing, Settings, LogOut, ClipboardList, Contact, Megaphone,
@@ -38,10 +38,19 @@ function useUnreadChat(staffId, muted, mutedChannels) {
   const silencedRef = useRef(new Set());
   silencedRef.current = new Set(mutedChannels ?? []);
 
+  // Groups (names, colors) change rarely: read again at most every 5 minutes.
+  const channelsRef = useRef({ at: 0, list: [] });
+  async function loadChannels() {
+    if (Date.now() - channelsRef.current.at < 300_000) return channelsRef.current.list;
+    const { data } = await supabase.from('chat_channels').select(CHANNEL_SELECT);
+    channelsRef.current = { at: Date.now(), list: data ?? [] };
+    return channelsRef.current.list;
+  }
+
   async function refresh() {
-    const [{ data: counts }, { data: channels }] = await Promise.all([
+    const [{ data: counts }, channels] = await Promise.all([
       supabase.rpc('unread_counts'),
-      supabase.from('chat_channels').select(CHANNEL_SELECT),
+      loadChannels(),
     ]);
     const list = (counts ?? []).filter((r) => Number(r.unread) > 0 && !silencedRef.current.has(r.channel_id)).map((r) => {
       const channel = (channels ?? []).find((c) => c.id === r.channel_id);
@@ -74,7 +83,7 @@ function useUnreadChat(staffId, muted, mutedChannels) {
   // Silencing or unsilencing a group updates the menu right away.
   const silencedKey = (mutedChannels ?? []).join();
   useEffect(() => { if (last.current !== null) { last.current = null; refresh(); } }, [silencedKey]); // eslint-disable-line react-hooks/exhaustive-deps
-  useInterval(refresh, 10000);
+  useInterval(refresh, 30000);
   return unread;
 }
 
@@ -87,8 +96,9 @@ function useUnreadWhatsApp(muted) {
   mutedRef.current = muted;
 
   async function refresh() {
-    const { data } = await supabase.from('whatsapp_conversations').select('unread_count').gt('unread_count', 0);
-    const total = (data ?? []).reduce((sum, r) => sum + Number(r.unread_count), 0);
+    const { data, error } = await supabase.rpc('whatsapp_unread_total');
+    if (error) return;
+    const total = Number(data ?? 0);
     if (last.current !== null && total > last.current && !mutedRef.current) playChime();
     last.current = total;
     setUnread(total);
@@ -113,7 +123,7 @@ function useUnreadWhatsApp(muted) {
       window.removeEventListener('whatsapp-read', refresh);
     };
   }, []);
-  useInterval(refresh, 15000);
+  useInterval(refresh, 30000);
   return unread;
 }
 
@@ -194,7 +204,7 @@ export function Layout() {
         </div>
       </aside>
       <main className="main">
-        <Outlet />
+        <Suspense fallback={<div className="page-loading">Carregando…</div>}><Outlet /></Suspense>
       </main>
     </div>
   );

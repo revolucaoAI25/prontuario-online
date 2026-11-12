@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { CalendarDays, ChevronLeft, ChevronRight, Clock, List, Lock, Plus } from 'lucide-react';
 import { supabase } from '../../lib/supabase.js';
-import { useLoad, useInterval } from '../../lib/hooks.js';
+import { useCoalesced, useLoad, useInterval } from '../../lib/hooks.js';
 import { useToast } from '../../context/ToastContext.jsx';
 import { useAuth } from '../../context/AuthContext.jsx';
 import { HOLDS_SLOT, STATUSES, displayStatus } from '../../lib/status.js';
@@ -97,14 +97,15 @@ export function AgendaPage() {
   }, [agendas, selected, staff]);
   useEffect(() => { if (selected) remember('agenda.selected', selected); }, [selected]);
 
+  const reloadSoon = useCoalesced(() => reload(), 500);
   useEffect(() => {
     const channel = supabase
       .channel('agenda-live')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'appointments' }, () => reload())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'appointments' }, () => reloadSoon())
       .subscribe();
     return () => { supabase.removeChannel(channel); };
-  }, [reload]);
-  useInterval(reload, 30000);
+  }, [reloadSoon]);
+  useInterval(reload, 60000);
 
   const visibleAgendas = agendas.filter((a) => (selected ?? []).includes(a.id));
   const visibleIds = new Set(visibleAgendas.map((a) => a.id));

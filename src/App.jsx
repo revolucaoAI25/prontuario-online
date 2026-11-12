@@ -1,20 +1,23 @@
+import { lazy } from 'react';
 import { Navigate, Route, Routes } from 'react-router-dom';
 import { useAuth } from './context/AuthContext.jsx';
 import { Layout } from './components/Layout.jsx';
 import { LoginPage } from './pages/LoginPage.jsx';
 import { AgendaPage } from './pages/agenda/AgendaPage.jsx';
-import { PatientsPage } from './pages/PatientsPage.jsx';
-import { RecordPage } from './pages/RecordPage.jsx';
-import { RecordsPage } from './pages/RecordsPage.jsx';
-import { AdminPage } from './pages/AdminPage.jsx';
-import { PeoplePage } from './pages/PeoplePage.jsx';
-import { FinancePage } from './pages/FinancePage.jsx';
-import { StockPage } from './pages/StockPage.jsx';
-import { ChatPage } from './pages/ChatPage.jsx';
-import { ConversationsPage } from './pages/ConversationsPage.jsx';
-import { RemindersPage } from './pages/RemindersPage.jsx';
-import { SettingsPage } from './pages/settings/SettingsPage.jsx';
-import { CampaignsPage } from './pages/CampaignsPage.jsx';
+
+// Screens other than the Agenda load when first opened (smaller first load).
+const PatientsPage = lazy(() => import('./pages/PatientsPage.jsx').then((m) => ({ default: m.PatientsPage })));
+const RecordPage = lazy(() => import('./pages/RecordPage.jsx').then((m) => ({ default: m.RecordPage })));
+const RecordsPage = lazy(() => import('./pages/RecordsPage.jsx').then((m) => ({ default: m.RecordsPage })));
+const AdminPage = lazy(() => import('./pages/AdminPage.jsx').then((m) => ({ default: m.AdminPage })));
+const PeoplePage = lazy(() => import('./pages/PeoplePage.jsx').then((m) => ({ default: m.PeoplePage })));
+const FinancePage = lazy(() => import('./pages/FinancePage.jsx').then((m) => ({ default: m.FinancePage })));
+const StockPage = lazy(() => import('./pages/StockPage.jsx').then((m) => ({ default: m.StockPage })));
+const ChatPage = lazy(() => import('./pages/ChatPage.jsx').then((m) => ({ default: m.ChatPage })));
+const ConversationsPage = lazy(() => import('./pages/ConversationsPage.jsx').then((m) => ({ default: m.ConversationsPage })));
+const RemindersPage = lazy(() => import('./pages/RemindersPage.jsx').then((m) => ({ default: m.RemindersPage })));
+const SettingsPage = lazy(() => import('./pages/settings/SettingsPage.jsx').then((m) => ({ default: m.SettingsPage })));
+const CampaignsPage = lazy(() => import('./pages/CampaignsPage.jsx').then((m) => ({ default: m.CampaignsPage })));
 
 function AdminOnly({ children }) {
   const { isAdmin } = useAuth();

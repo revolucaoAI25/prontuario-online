@@ -724,4 +724,4 @@ body.focus-mode .record-head .avatar.lg { width: 40px; height: 40px; font-size: 
 .audience-row.out .grow { text-decoration: line-through; color: var(--ink-mute); }
 .chip.muted { opacity: 0.55; text-decoration: line-through; }
 @media (max-width: 700px) { .campaign-grid { grid-template-columns: minmax(0, 1fr); } }
-
+.page-loading { flex: 1; display: grid; place-items: center; color: var(--ink-mute); font-size: 13px; }

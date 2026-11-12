@@ -4,7 +4,7 @@ import {
   AlertCircle, Bell, BellOff, Check, CheckCheck, Clock, Download, FileText, MessageCircle, Mic, MessageCirclePlus, Paperclip, QrCode, RotateCw, Search, Send, Square, Trash2, X,
 } from 'lucide-react';
 import { supabase, must, callApi } from '../lib/supabase.js';
-import { useInterval, useLoad } from '../lib/hooks.js';
+import { useCoalesced, useInterval, useLoad } from '../lib/hooks.js';
 import { localTime } from '../lib/time.js';
 import { groupMessages, listTime, useStickToBottom } from '../lib/chat.js';
 import { useToast } from '../context/ToastContext.jsx';
@@ -191,14 +191,15 @@ export function ConversationsPage() {
   );
   const urls = useSignedUrls(messages.filter((m) => m.media_status === 'ok' && m.media_path).map((m) => m.media_path));
 
+  const refreshSoon = useCoalesced(() => { reload(); reloadThread(); }, 700);
   useEffect(() => {
     const channel = supabase
       .channel('whatsapp-mirror')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'whatsapp_messages' }, () => { reload(); reloadThread(); })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'whatsapp_messages' }, () => refreshSoon())
       .subscribe();
     return () => { supabase.removeChannel(channel); };
-  }, [reload, reloadThread]);
-  useInterval(() => { reload(); reloadThread(); }, 15000);
+  }, [refreshSoon]);
+  useInterval(() => { reload(); reloadThread(); }, 30000);
 
   const current = draft ?? conversations.find((c) => c.remote_jid === jid);
   const conversationKey = draft ? `draft-${draft.phone_digits}` : jid;

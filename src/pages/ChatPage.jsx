@@ -86,7 +86,7 @@ export function ChatPage() {
       .subscribe();
     return () => { supabase.removeChannel(channel); };
   }, [reloadMessages, reloadChannels]);
-  useInterval(() => { reloadMessages(); reloadChannels(); }, 5000);
+  useInterval(() => { reloadMessages(); reloadChannels(); }, 20000);
 
   // Shown right away; replaced by the stored message once it is saved.
   async function send() {
