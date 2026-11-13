@@ -24,7 +24,7 @@ $$;
 
 -- Limpa uma tentativa anterior (só objetos deste sistema, no schema public).
 drop view if exists public.campaign_progress, public.stock_levels, public.whatsapp_conversations cascade;
-drop table if exists public.admin_notes, public.admin_tasks, public.agenda_blocks, public.agenda_hours, public.agenda_openings, public.agenda_slot_times, public.agendas, public.appointment_procedures, public.appointment_types, public.appointments, public.birthday_messages, public.campaign_recipients, public.campaigns, public.chat_channel_members, public.chat_channels, public.chat_messages, public.chat_reads, public.employee_vacations, public.employees, public.expenses, public.finance_pin, public.finance_pin_attempts, public.no_show_alerts, public.note_shortcuts, public.patient_legacy_aliases, public.patient_not_duplicates, public.patients, public.payments, public.private, public.procedures, public.record_attachments, public.record_entries, public.reminder_recalc_queue, public.reminders, public.settings, public.staff, public.staff_finance_pins, public.stock_movements, public.stock_products, public.stock_sectors, public.whatsapp_connection_events, public.whatsapp_lid_map, public.whatsapp_messages, public.whatsapp_reads cascade;
+drop table if exists public.admin_notes, public.admin_tasks, public.agenda_blocks, public.agenda_hours, public.agenda_openings, public.agenda_slot_times, public.agendas, public.appointment_procedures, public.appointment_types, public.appointments, public.birthday_messages, public.campaign_recipients, public.campaigns, public.chat_channel_members, public.chat_channels, public.chat_messages, public.chat_reads, public.employee_vacations, public.employees, public.expenses, public.finance_pin, public.finance_pin_attempts, public.no_show_alerts, public.note_shortcuts, public.patient_legacy_aliases, public.patient_not_duplicates, public.patients, public.payments, public.private, public.procedures, public.record_attachments, public.record_entries, public.reminder_recalc_queue, public.reminders, public.settings, public.staff, public.staff_finance_pins, public.stock_movements, public.stock_products, public.stock_sectors, public.whatsapp_connection_events, public.whatsapp_lid_map, public.whatsapp_messages, public.whatsapp_reads, public.whatsapp_watchdog cascade;
 drop type if exists public.appointment_status, public.payment_method, public.payment_status, public.reminder_status, public.staff_role, public.stock_movement_type cascade;
 do $$
 declare
@@ -3582,6 +3582,131 @@ create table whatsapp_lid_map (
 );
 alter table whatsapp_lid_map enable row level security;
 -- No policies: only the server (webhook, sync) reads and writes it.
+
+-- ---------------------------------------------------------------------
+-- supabase/migrations/20261113000026_whatsapp_list_speed.sql
+-- ---------------------------------------------------------------------
+
+-- The WhatsApp conversation list took over two minutes for a logged-in user
+-- (and so came back empty: the app gives up after 8 seconds). Each
+-- conversation looks its patient up by phone; under the patients' access
+-- rules the database may not use the phone index for that (phone_key is not
+-- "leakproof"), so it read all patients once per conversation. The lookup
+-- now runs with the owner's rights, which uses the index; it only returns
+-- an id, and the patient's name still comes through the normal rules.
+create or replace function match_patient_by_phone(p_digits text) returns uuid
+language sql stable security definer set search_path = public as $$
+    select id from patients
+    where phone_key(p_digits) is not null
+      and (phone_key(phone) = phone_key(p_digits) or phone_key(phone_alt) = phone_key(p_digits))
+    order by updated_at desc
+    limit 1
+$$;
+revoke execute on function match_patient_by_phone(text) from anon;
+
+-- Messages already linked at arrival don't need the lookup at all; link the
+-- ones that arrived before their patient was registered.
+update whatsapp_messages m
+set patient_id = match_patient_by_phone(m.phone_digits)
+where m.patient_id is null and m.phone_digits is not null and match_patient_by_phone(m.phone_digits) is not null;
+
+-- ---------------------------------------------------------------------
+-- supabase/migrations/20261113000027_whatsapp_watchdog.sql
+-- ---------------------------------------------------------------------
+
+-- WhatsApp watchdog. Every 2 minutes the database calls the server
+-- (/api/cron/whatsapp), which:
+--   * fetches from Evolution any message of the last hours that the webhook
+--     didn't deliver;
+--   * spots a stuck connection (Evolution says "connected" but nothing
+--     arrives during opening hours, or what arrives is late) and restarts
+--     it, which also pulls the late messages;
+--   * when restarting doesn't help, tells the team to read the QR Code
+--     again (banner on every screen).
+-- The outcome of the last check is kept here for the screens.
+
+create table whatsapp_watchdog (
+    id integer primary key default 1 check (id = 1),
+    checked_at timestamptz,
+    state text,
+    -- ok | atrasado (catching up) | travado (restarted, waiting)
+    -- | desconectado | precisa_reconectar | nao_configurado
+    status text not null default 'ok',
+    detail text,
+    last_arrival_at timestamptz,
+    restarts timestamptz[] not null default '{}',
+    last_sync_added integer not null default 0,
+    last_sync_at timestamptz
+);
+insert into whatsapp_watchdog (id) values (1) on conflict do nothing;
+alter table whatsapp_watchdog enable row level security;
+create policy whatsapp_watchdog_select on whatsapp_watchdog for select to authenticated using ((select is_staff()));
+
+drop function if exists whatsapp_health();
+create function whatsapp_health()
+returns table (
+    last_received_at timestamptz,
+    delay_minutes integer,
+    late_messages integer,
+    last_state text,
+    last_state_at timestamptz,
+    watch_status text,
+    watch_detail text,
+    watch_checked_at timestamptz,
+    last_restart_at timestamptz,
+    restarts_last_hour integer
+)
+language sql stable as $$
+    select
+        (select max(created_at) from whatsapp_messages),
+        (select coalesce(max(extract(epoch from created_at - sent_at)) / 60, 0)::integer
+           from whatsapp_messages
+          where created_at > now() - interval '2 hours' and sent_by is null),
+        (select count(*)::integer
+           from whatsapp_messages
+          where created_at > now() - interval '2 hours' and sent_by is null
+            and created_at - sent_at > interval '5 minutes'),
+        e.state,
+        e.at,
+        w.status,
+        w.detail,
+        w.checked_at,
+        (select max(r) from unnest(w.restarts) r),
+        (select count(*)::integer from unnest(w.restarts) r where r > now() - interval '1 hour')
+    from (select 1) one
+    left join lateral (select state, at from whatsapp_connection_events order by at desc limit 1) e on true
+    left join whatsapp_watchdog w on w.id = 1
+$$;
+
+create function ping_whatsapp_watchdog() returns text
+language plpgsql security definer set search_path = public as $$
+declare
+    v_app text := setting_text('app_url');
+    v_token text;
+begin
+    if v_app is null or v_app !~ '^https?://' then return 'não configurado'; end if;
+    select token into v_token from private.internal_tokens where name = 'cron';
+    perform net.http_post(
+        url := rtrim(v_app, '/') || '/api/cron/whatsapp',
+        body := '{}'::jsonb,
+        headers := jsonb_build_object('content-type', 'application/json', 'x-cron-token', v_token),
+        timeout_milliseconds := 60000
+    );
+    return 'chamado';
+end;
+$$;
+revoke execute on function ping_whatsapp_watchdog() from public;
+
+do $$
+begin
+    if exists (select 1 from pg_roles where rolname = 'anon') then
+        revoke execute on function ping_whatsapp_watchdog() from anon, authenticated;
+    end if;
+    if exists (select 1 from pg_extension where extname = 'pg_cron') then
+        perform cron.schedule('whatsapp-vigia', '*/2 * * * *', 'select public.ping_whatsapp_watchdog()');
+    end if;
+end;
+$$;
 
 -- ---------------------------------------------------------------------
 -- supabase/seed.sql

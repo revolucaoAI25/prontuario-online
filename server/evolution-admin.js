@@ -76,13 +76,21 @@ export async function whatsappStatus() {
 
 // Creates the instance if needed, (re)applies the webhook, and returns the
 // QR code when the number still has to be scanned.
-export async function whatsappConnect(_body, req) {
+export async function whatsappConnect(body, req) {
   const { url, key, instance } = config();
   if (!url || !key) {
     throw new ApiError(400, 'configuracao_incompleta', 'O WhatsApp ainda não foi configurado. Fale com o suporte técnico.');
   }
   const hook = webhookUrl(req);
   const webhook = { enabled: true, url: hook, byEvents: false, base64: false, events: [...WEBHOOK_EVENTS, ...EXTRA_EVENTS] };
+
+  // "Gerar novo QR Code": a connection that says it's open but stopped
+  // receiving only recovers with a fresh pairing.
+  if (body?.novo_qr) {
+    const out = await evo(`/instance/logout/${encodeURIComponent(instance)}`, { method: 'DELETE' });
+    if (out.status >= 400 && out.status !== 404) fail(out.status, out.json);
+    await query(`insert into whatsapp_connection_events (instance, state, reason) values ($1, 'close', 'novo QR Code pedido no sistema')`, [instance]);
+  }
 
   let state = await connectionState();
   let qr = null;
@@ -270,19 +278,13 @@ export async function whatsappRetryMedia(body) {
   return {};
 }
 
-// POST /api/whatsapp/sincronizar — fetch from Evolution's own store the
-// messages of the last days that never reached the system (webhook down,
-// server restarted...). Only adds what is missing; nothing is changed.
+// Messages of a period kept in Evolution's own store.
 const SYNC_PAGE = 100;
 const SYNC_MAX_PAGES = 60;
 const SYNC_MEDIA_NOW = 15;
 
-export async function whatsappSync(body) {
-  const { url, key, instance } = config();
-  if (!url || !key) throw new ApiError(400, 'configuracao_incompleta', 'O WhatsApp da clínica ainda não foi configurado.');
-  const days = Math.min(Math.max(Number(body.dias) || 3, 1), 15);
-  const to = new Date();
-  const from = new Date(to.getTime() - days * 86_400_000);
+async function fetchStoredMessages(from, to) {
+  const { instance } = config();
   const records = [];
   for (let page = 1; page <= SYNC_MAX_PAGES; page++) {
     const { status, json } = await evo(`/chat/findMessages/${encodeURIComponent(instance)}`, {
@@ -300,17 +302,59 @@ export async function whatsappSync(body) {
     const pages = Number(box?.pages) || 0;
     if (list.length < SYNC_PAGE || inRange.length < list.length || (pages && page >= pages)) break;
   }
+  return records;
+}
+
+// Stores those the system doesn't have yet. `historic`: their own time
+// counts as arrival (old messages don't show up as new).
+export async function syncFromEvolution({ from, to = new Date(), historic = true, mediaNow = SYNC_MEDIA_NOW }) {
+  const { instance } = config();
+  const records = await fetchStoredMessages(from, to);
+  const ids = [...new Set(records.map((r) => r?.key?.id).filter(Boolean))];
+  const { rows } = ids.length
+    ? await query(`select wa_message_id from whatsapp_messages where wa_message_id = any($1)`, [ids])
+    : { rows: [] };
+  const have = new Set(rows.map((r) => r.wa_message_id));
+  const seen = new Set();
+  const missing = records.filter((r) => {
+    const id = r?.key?.id;
+    if (!id || have.has(id) || seen.has(id)) return false;
+    seen.add(id);
+    return true;
+  });
   // Messages that carry the phone first, so "@lid"-only ones of the same
   // contact find their conversation.
-  records.sort((a, b) => Number(Boolean(b?.key?.remoteJidAlt || b?.key?.senderPn)) - Number(Boolean(a?.key?.remoteJidAlt || a?.key?.senderPn)));
+  missing.sort((a, b) => Number(Boolean(b?.key?.remoteJidAlt || b?.key?.senderPn)) - Number(Boolean(a?.key?.remoteJidAlt || a?.key?.senderPn)));
   let added = 0;
   const media = [];
-  for (let i = 0; i < records.length; i += SYNC_PAGE) {
-    const result = await storeEvolutionEvent({ event: 'messages.set', instance, data: records.slice(i, i + SYNC_PAGE) }, { historic: true });
+  for (let i = 0; i < missing.length; i += SYNC_PAGE) {
+    const result = await storeEvolutionEvent({ event: 'messages.set', instance, data: missing.slice(i, i + SYNC_PAGE) }, { historic });
     added += result.gravadas;
     media.push(...result.midias_pendentes);
   }
   // A few attachments now; the rest download when opened ("tentar de novo").
-  await downloadPendingMedia(media.slice(0, SYNC_MEDIA_NOW));
-  return { dias: days, encontradas: records.length, novas: added };
+  await downloadPendingMedia(media.slice(0, mediaNow));
+  return { encontradas: records.length, novas: added };
 }
+
+// POST /api/whatsapp/sincronizar — fetch from Evolution's own store the
+// messages of the last days that never reached the system (webhook down,
+// server restarted...). Only adds what is missing; nothing is changed.
+export async function whatsappSync(body) {
+  const { url, key } = config();
+  if (!url || !key) throw new ApiError(400, 'configuracao_incompleta', 'O WhatsApp da clínica ainda não foi configurado.');
+  const days = Math.min(Math.max(Number(body.dias) || 3, 1), 15);
+  const result = await syncFromEvolution({ from: new Date(Date.now() - days * 86_400_000) });
+  return { dias: days, ...result };
+}
+
+// Reopens the connection to WhatsApp without logging the number out.
+export async function restartInstance() {
+  const { instance } = config();
+  let r = await evo(`/instance/restart/${encodeURIComponent(instance)}`, { method: 'POST', timeout: 30_000 });
+  if (r.status === 404 || r.status === 405) r = await evo(`/instance/restart/${encodeURIComponent(instance)}`, { method: 'PUT', timeout: 30_000 });
+  if (r.status >= 400) fail(r.status, r.json);
+  return true;
+}
+
+export { connectionState, config as evolutionConfig };

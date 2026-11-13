@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { QrCode, RefreshCw, Unplug } from 'lucide-react';
+import { QrCode, RefreshCw, RotateCcw, Unplug } from 'lucide-react';
 import { callApi } from '../lib/supabase.js';
 import { useToast } from '../context/ToastContext.jsx';
 import { useAuth } from '../context/AuthContext.jsx';
@@ -14,7 +14,7 @@ const STATE_LABEL = {
 // Connect the clinic's WhatsApp to the Evolution API from inside the app:
 // shows the QR code (refreshed while waiting) and the connection status.
 // Anyone on the team can reconnect; only an admin can disconnect.
-export function WhatsAppConnection({ onStatus, autoConnect = false }) {
+export function WhatsAppConnection({ onStatus, autoConnect = false, stuck = false }) {
   const toast = useToast();
   const { isAdmin } = useAuth();
   const [status, setStatus] = useState(null);
@@ -35,10 +35,10 @@ export function WhatsAppConnection({ onStatus, autoConnect = false }) {
     }
   }
 
-  async function connect() {
+  async function connect(fresh = false) {
     setBusy(true);
     try {
-      const r = await callApi('whatsapp/conectar');
+      const r = await callApi('whatsapp/conectar', fresh ? { novo_qr: true } : {});
       qrAt.current = Date.now();
       if (r.estado === 'open') {
         setQr(null);
@@ -52,6 +52,13 @@ export function WhatsAppConnection({ onStatus, autoConnect = false }) {
     } finally {
       setBusy(false);
     }
+  }
+
+  // Says "connected" but stopped receiving: only a fresh pairing fixes it.
+  function newQr() {
+    // eslint-disable-next-line no-alert
+    if (!window.confirm('Gerar um novo QR Code? O número sai do servidor e volta quando alguém ler o código com o celular da clínica (leva 1 minuto). As mensagens continuam chegando normalmente no celular.')) return;
+    connect(true);
   }
 
   async function disconnect() {
@@ -78,7 +85,11 @@ export function WhatsAppConnection({ onStatus, autoConnect = false }) {
     const id = setInterval(async () => {
       const s = await refreshStatus();
       if (s?.estado === 'open') {
-        toast.info('WhatsApp conectado!');
+        toast.info('WhatsApp conectado! Buscando as mensagens dos últimos dias…');
+        // whatever came in while it was off
+        callApi('whatsapp/sincronizar', { dias: 3 })
+          .then((r) => r.novas && toast.info(`${r.novas} mensagens recuperadas.`))
+          .catch(() => {});
       } else if (Date.now() - qrAt.current > 30_000) {
         connect();
       }
@@ -106,9 +117,14 @@ export function WhatsAppConnection({ onStatus, autoConnect = false }) {
             <button type="button" className="btn btn-sm" onClick={refreshStatus}><RefreshCw /> Atualizar</button>
           </div>
           <div className="row-wrap">
-            <button type="button" className="btn btn-primary" disabled={busy} onClick={connect}>
-              <QrCode /> {status.estado === 'open' ? 'Verificar conexão' : 'Conectar (mostrar QR Code)'}
-            </button>
+            {status.estado === 'open' && stuck ? (
+              <button type="button" className="btn btn-primary" disabled={busy} onClick={newQr}><RotateCcw /> Gerar novo QR Code</button>
+            ) : (
+              <button type="button" className="btn btn-primary" disabled={busy} onClick={() => connect()}>
+                <QrCode /> {status.estado === 'open' ? 'Verificar conexão' : 'Conectar (mostrar QR Code)'}
+              </button>
+            )}
+            {status.estado === 'open' && !stuck && <button type="button" className="btn" disabled={busy} onClick={newQr}><RotateCcw /> Novo QR Code</button>}
             {status.estado === 'open' && isAdmin && <button type="button" className="btn btn-danger" onClick={disconnect}><Unplug /> Desconectar</button>}
           </div>
           {qr && (

@@ -555,6 +555,13 @@ input[type='checkbox'], input[type='radio'] { accent-color: var(--brand); width:
 
 /* ---------- WhatsApp extras ---------- */
 .chat-back { display: none; }
+.banner.danger { background: var(--danger-bg); color: var(--danger); border-color: #eccac5; }
+.wa-global-alert {
+  display: flex; align-items: center; gap: 10px; margin-bottom: 12px; padding: 10px 14px; border-radius: 12px;
+  background: var(--danger-bg); color: var(--danger); border: 1px solid #eccac5; font-size: 13px; font-weight: 600; text-decoration: none;
+}
+.wa-global-alert svg { width: 18px; height: 18px; flex: none; }
+.wa-global-alert b { flex: none; text-decoration: underline; }
 .wa-banner .wa-short { display: none; }
 .wa-banner { margin-bottom: 12px; gap: 10px; flex-wrap: wrap; }
 .wa-sync { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--border); }

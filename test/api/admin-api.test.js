@@ -13,7 +13,7 @@ process.env.EVOLUTION_INSTANCE = 'clinica-teste';
 process.env.EVOLUTION_WEBHOOK_SECRET = 'segredo-webhook';
 
 // Minimal stand-in for an Evolution API v2 server.
-const evo = { instances: new Map(), calls: [], mediaFails: true, fetched: null, stored: [], oldServer: false };
+const evo = { instances: new Map(), calls: [], mediaFails: true, fetched: null, stored: [], oldServer: false, restarts: 0 };
 const storageDir = mkdtempSync(path.join(tmpdir(), 'storage-'));
 const evoServer = http.createServer((req, res) => {
   const chunks = [];
@@ -46,6 +46,7 @@ const evoServer = http.createServer((req, res) => {
       return send(200, { messages: { total: all.length, pages: Math.ceil(all.length / body.offset), currentPage: body.page, records } });
     }
     if (action === 'logout') { instance.state = 'close'; return send(200, {}); }
+    if (action === 'restart') { evo.restarts++; return send(200, { instance: { instanceName: name, state: instance.state } }); }
     if (area === 'chat' && action === 'getBase64FromMediaMessage') {
       if (body.message.key.id === 'FAILMEDIA' && evo.mediaFails) return send(400, { response: { message: ['Message not found'] } });
       return send(201, { mediaType: 'imageMessage', mimetype: 'image/jpeg', base64: Buffer.from(`jpeg:${body.message.key.id}`).toString('base64') });
@@ -361,4 +362,92 @@ test('WhatsApp: messages missing from the system are fetched from Evolution, onc
     method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${rec}` }, body: JSON.stringify({}),
   }).then((r) => r.json());
   assert.equal(again.novas, 0);
+});
+
+test('WhatsApp: "Novo QR Code" logs the number out and shows a fresh code', async () => {
+  const rec = await login('rec@t.dev');
+  evo.instances.get('clinica-teste').state = 'open';
+  const res = await wa('conectar', { novo_qr: true }, rec);
+  assert.equal(res.status, 200);
+  assert.equal(res.body.qrcode, 'data:image/png;base64,QR2');
+  assert.ok(evo.calls.some((c) => c.method === 'DELETE' && c.url === '/instance/logout/clinica-teste'));
+  const ev = (await db.query(`select state, reason from whatsapp_connection_events order by id desc limit 1`)).rows[0];
+  assert.deepEqual([ev.state, ev.reason], ['close', 'novo QR Code pedido no sistema']);
+});
+
+test('WhatsApp watchdog: fills gaps, restarts a stuck connection, and asks for a new QR Code when that does not help', async () => {
+  const { whatsappWatchdog } = await import('../../server/whatsapp-watchdog.js');
+  const instance = evo.instances.get('clinica-teste');
+  const status = async () => (await db.query(`select * from whatsapp_watchdog`)).rows[0];
+  await db.query(`update whatsapp_watchdog set restarts = '{}'`);
+  await db.query(`delete from whatsapp_messages`);
+  evo.stored = [];
+  evo.restarts = 0;
+
+  // disconnected: nothing to restart, the team must read the QR Code
+  instance.state = 'close';
+  assert.equal((await whatsappWatchdog()).status, 'desconectado');
+  assert.equal(evo.restarts, 0);
+
+  // healthy: a message just arrived on time
+  instance.state = 'open';
+  const now = Math.floor(Date.now() / 1000);
+  const hook = (id, ts) => fetch(`${base.replace('/admin', '/webhooks/evolution')}?secret=segredo-webhook`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ event: 'messages.upsert', instance: 'clinica-teste', data: { key: { remoteJid: '5531933330000@s.whatsapp.net', fromMe: false, id }, message: { conversation: 'oi' }, messageTimestamp: ts } }),
+  });
+  await hook('WD1', now);
+  let r = await whatsappWatchdog();
+  assert.equal(r.status, 'ok');
+  assert.equal(evo.restarts, 0);
+
+  // the webhook missed one that Evolution has: added by the watchdog
+  evo.stored = [{ key: { remoteJid: '5531933330000@s.whatsapp.net', fromMe: false, id: 'WD-MISSED' }, message: { conversation: 'perdida' }, messageTimestamp: now - 60 }];
+  r = await whatsappWatchdog();
+  assert.equal(r.adicionadas, 1);
+  assert.equal((await db.query(`select 1 from whatsapp_messages where wa_message_id = 'WD-MISSED'`)).rowCount, 1);
+
+  // messages arriving 40 minutes late: the connection was stuck → restart
+  await db.query(`update whatsapp_watchdog set restarts = '{}'`);
+  evo.restarts = 0;
+  await hook('WD2', now - 40 * 60);
+  r = await whatsappWatchdog();
+  assert.equal(r.status, 'atrasado');
+  assert.equal(evo.restarts, 1);
+  // not again right away
+  await whatsappWatchdog();
+  assert.equal(evo.restarts, 1);
+
+  // still late after five restarts within the hour → new QR Code
+  const recent = Array.from({ length: 5 }, (_, i) => new Date(Date.now() - (10 + i * 7) * 60_000).toISOString());
+  await db.query(`update whatsapp_watchdog set restarts = $1`, [recent]);
+  r = await whatsappWatchdog();
+  assert.equal(r.status, 'precisa_reconectar');
+  const health = (await db.query(`select * from whatsapp_health()`)).rows[0];
+  assert.equal(health.watch_status, 'precisa_reconectar');
+  assert.equal(health.restarts_last_hour, 5);
+  assert.match(health.watch_detail, /QR Code/);
+
+  // silence during opening hours restarts quietly, without the alarm
+  await db.query(`update whatsapp_watchdog set restarts = '{}'`);
+  await db.query(`update whatsapp_messages set created_at = sent_at`);
+  evo.restarts = 0;
+  const tuesday10am = new Date('2026-12-01T13:00:00Z'); // 10:00 in Brazil
+  r = await whatsappWatchdog({ now: tuesday10am });
+  assert.equal(r.status, 'ok');
+  assert.equal(evo.restarts, 1);
+  assert.match((await status()).detail, /Sem mensagens há/);
+  // and on a Sunday, silence is normal
+  evo.restarts = 0;
+  await db.query(`update whatsapp_watchdog set restarts = '{}'`);
+  await whatsappWatchdog({ now: new Date('2026-12-06T13:00:00Z') });
+  assert.equal(evo.restarts, 0);
+});
+
+test('the WhatsApp watchdog route needs the cron token', async () => {
+  const res = await fetch(base.replace('/admin', '/cron/whatsapp'), { method: 'POST' });
+  assert.equal(res.status, 401);
+  const token = (await db.query(`select token from private.internal_tokens where name = 'cron'`)).rows[0].token;
+  const ok = await fetch(base.replace('/admin', '/cron/whatsapp'), { method: 'POST', headers: { 'x-cron-token': token } }).then((x) => x.json());
+  assert.equal(ok.ok, true);
 });

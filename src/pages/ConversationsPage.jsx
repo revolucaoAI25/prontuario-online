@@ -223,6 +223,14 @@ export function ConversationsPage() {
   const { data: health, reload: reloadHealth } = useLoad(() => must(supabase.rpc('whatsapp_health')).then((r) => r?.[0] ?? null), []);
   useInterval(() => { checkConnection(); reloadHealth(); }, 60000);
   const lateBy = health && health.late_messages >= 3 && health.delay_minutes >= 10 ? health.delay_minutes : 0;
+  // the watchdog says only a new QR Code will fix it
+  const stuck = health?.watch_status === 'precisa_reconectar';
+  // the global alert links here with ?reconectar=1
+  useEffect(() => {
+    if (!params.get('reconectar')) return;
+    setShowConnection(true);
+    setParams((prev) => { const next = new URLSearchParams(prev); next.delete('reconectar'); return next; }, { replace: true });
+  }, [params]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const { data: conversations = [], reload, loading: conversationsLoading } = useLoad(
     () => must(supabase.from('whatsapp_conversations').select('*').order('last_at', { ascending: false }).limit(300)),
@@ -461,7 +469,14 @@ export function ConversationsPage() {
           <button type="button" className="btn btn-sm btn-primary" onClick={() => setShowConnection(true)}><QrCode /> Conectar</button>
         </div>
       )}
-      {connected && lateBy > 0 && (
+      {connected && stuck && (
+        <div className="banner row wa-banner danger">
+          <span className="grow wa-long">{health.watch_detail}</span>
+          <span className="grow wa-short">WhatsApp parou de sincronizar.</span>
+          <button type="button" className="btn btn-sm btn-primary" onClick={() => setShowConnection(true)}><QrCode /> Reconectar</button>
+        </div>
+      )}
+      {connected && !stuck && lateBy > 0 && (
         <div className="banner row wa-banner">
           <span className="grow wa-long">
             As mensagens estão chegando aqui com atraso (até {formatDelay(lateBy)}). O servidor do WhatsApp está perdendo a conexão.
@@ -473,7 +488,7 @@ export function ConversationsPage() {
       )}
       {showConnection && (
         <Modal title="Conexão do WhatsApp" onClose={() => { setShowConnection(false); checkConnection(); }}>
-          <WhatsAppConnection onStatus={setConnection} autoConnect={!connected} />
+          <WhatsAppConnection onStatus={setConnection} autoConnect={!connected} stuck={stuck} />
           {connected && (
             <div className="wa-sync">
               <div className="small muted grow">Alguma mensagem que está no celular não apareceu aqui? O sistema busca no servidor do WhatsApp as dos últimos 3 dias que faltarem.</div>

@@ -1,7 +1,7 @@
 import { Suspense, useEffect, useRef, useState } from 'react';
-import { NavLink, Outlet } from 'react-router-dom';
+import { NavLink, Outlet, useLocation } from 'react-router-dom';
 import {
-  CalendarDays, Users, FileText, Wallet, Package, MessagesSquare, MessageCircle, BellRing, Settings, LogOut, ClipboardList, Contact, Megaphone,
+  CalendarDays, Users, FileText, Wallet, Package, MessagesSquare, MessageCircle, BellRing, Settings, LogOut, ClipboardList, Contact, Megaphone, AlertTriangle,
 } from 'lucide-react';
 import { supabase } from '../lib/supabase.js';
 import { useAuth } from '../context/AuthContext.jsx';
@@ -168,8 +168,24 @@ function ChatBubbles({ list }) {
   );
 }
 
+// The WhatsApp watchdog's verdict (checked every 2 minutes on the server):
+// when only a new QR Code will fix it, every screen says so.
+function useWhatsAppAlert() {
+  const [alert, setAlert] = useState(null);
+  async function refresh() {
+    const { data } = await supabase.rpc('whatsapp_health');
+    const h = data?.[0];
+    setAlert(h && ['desconectado', 'precisa_reconectar'].includes(h.watch_status) ? h : null);
+  }
+  useEffect(() => { refresh(); }, []);
+  useInterval(refresh, 60000);
+  return alert;
+}
+
 export function Layout() {
   const { staff, isAdmin, isReception, isSuperAdmin, signOut } = useAuth();
+  const waAlert = useWhatsAppAlert();
+  const onWhatsApp = useLocation().pathname.startsWith('/conversas');
   const chat = useUnreadChat(staff?.id, staff?.mute_chat, staff?.chat_muted_channels);
   const unread = { whatsapp: useUnreadWhatsApp(staff?.mute_whatsapp), tasks: useDueTasks(isReception) };
   const mobile = isMobileDevice();
@@ -204,6 +220,13 @@ export function Layout() {
         </div>
       </aside>
       <main className="main">
+        {waAlert && !onWhatsApp && (
+          <NavLink to="/conversas?reconectar=1" className="wa-global-alert">
+            <AlertTriangle />
+            <span className="grow">{waAlert.watch_detail ?? 'O WhatsApp parou de sincronizar.'}</span>
+            <b>Reconectar</b>
+          </NavLink>
+        )}
         <Suspense fallback={<div className="page-loading">Carregando…</div>}><Outlet /></Suspense>
       </main>
     </div>
