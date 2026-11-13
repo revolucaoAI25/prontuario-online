@@ -24,7 +24,7 @@ $$;
 
 -- Limpa uma tentativa anterior (só objetos deste sistema, no schema public).
 drop view if exists public.campaign_progress, public.stock_levels, public.whatsapp_conversations cascade;
-drop table if exists public.admin_notes, public.admin_tasks, public.agenda_blocks, public.agenda_hours, public.agenda_openings, public.agenda_slot_times, public.agendas, public.appointment_procedures, public.appointment_types, public.appointments, public.birthday_messages, public.campaign_recipients, public.campaigns, public.chat_channel_members, public.chat_channels, public.chat_messages, public.chat_reads, public.employee_vacations, public.employees, public.expenses, public.finance_pin, public.finance_pin_attempts, public.no_show_alerts, public.note_shortcuts, public.patient_legacy_aliases, public.patient_not_duplicates, public.patients, public.payments, public.private, public.procedures, public.record_attachments, public.record_entries, public.reminder_recalc_queue, public.reminders, public.settings, public.staff, public.staff_finance_pins, public.stock_movements, public.stock_products, public.stock_sectors, public.whatsapp_connection_events, public.whatsapp_messages, public.whatsapp_reads cascade;
+drop table if exists public.admin_notes, public.admin_tasks, public.agenda_blocks, public.agenda_hours, public.agenda_openings, public.agenda_slot_times, public.agendas, public.appointment_procedures, public.appointment_types, public.appointments, public.birthday_messages, public.campaign_recipients, public.campaigns, public.chat_channel_members, public.chat_channels, public.chat_messages, public.chat_reads, public.employee_vacations, public.employees, public.expenses, public.finance_pin, public.finance_pin_attempts, public.no_show_alerts, public.note_shortcuts, public.patient_legacy_aliases, public.patient_not_duplicates, public.patients, public.payments, public.private, public.procedures, public.record_attachments, public.record_entries, public.reminder_recalc_queue, public.reminders, public.settings, public.staff, public.staff_finance_pins, public.stock_movements, public.stock_products, public.stock_sectors, public.whatsapp_connection_events, public.whatsapp_lid_map, public.whatsapp_messages, public.whatsapp_reads cascade;
 drop type if exists public.appointment_status, public.payment_method, public.payment_status, public.reminder_status, public.staff_role, public.stock_movement_type cascade;
 do $$
 declare
@@ -3564,6 +3564,24 @@ language sql stable as $$
     from (select 1) one
     left join lateral (select state, at from whatsapp_connection_events order by at desc limit 1) e on true
 $$;
+
+-- ---------------------------------------------------------------------
+-- supabase/migrations/20261113000025_whatsapp_lid_map.sql
+-- ---------------------------------------------------------------------
+
+-- Newer WhatsApp accounts identify a contact by an anonymous "@lid" id
+-- instead of the phone. Evolution usually sends the phone along
+-- (remoteJidAlt / senderPn); when it does, the pair is remembered, so a
+-- later message that only carries the "@lid" id still lands in the same
+-- conversation (one per phone) and is linked to the patient.
+
+create table whatsapp_lid_map (
+    lid text primary key,
+    phone_jid text not null,
+    updated_at timestamptz not null default now()
+);
+alter table whatsapp_lid_map enable row level security;
+-- No policies: only the server (webhook, sync) reads and writes it.
 
 -- ---------------------------------------------------------------------
 -- supabase/seed.sql

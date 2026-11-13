@@ -300,6 +300,20 @@ test('connection drops are recorded, and late messages show up in the health che
   assert.equal(health.last_state, 'open');
 });
 
+test('a contact seen by its "@lid" id stays in the conversation of its phone', async () => {
+  const patient = await createPatient(db, { name: 'Lena Lid', phone: '(31) 97777-3434' });
+  // first message only with the anonymous id: its own conversation for now
+  await evolution(upsert({ id: 'LD1', remoteJid: '999000111@lid' }, { conversation: 'Oi, é a Lena' }));
+  assert.equal((await one(db, `select remote_jid from whatsapp_messages where wa_message_id = 'LD1'`)).remote_jid, '999000111@lid');
+  // then one that carries the phone too: both join the phone's conversation
+  await evolution(upsert({ id: 'LD2', remoteJid: '999000111@lid', remoteJidAlt: '5531977773434@s.whatsapp.net' }, { conversation: 'Quero marcar' }));
+  // and later ones with the anonymous id only follow
+  await evolution(upsert({ id: 'LD3', remoteJid: '999000111@lid' }, { conversation: 'Pode ser sexta?' }, { messageTimestamp: 1793000200 }));
+  const rows = (await db.query(`select wa_message_id, remote_jid, patient_id from whatsapp_messages where wa_message_id like 'LD%' order by 1`)).rows;
+  assert.deepEqual(rows.map((r) => [r.remote_jid, r.patient_id]), Array(3).fill(['5531977773434@s.whatsapp.net', patient]));
+  assert.equal((await db.query(`select 1 from whatsapp_conversations where remote_jid = '999000111@lid'`)).rowCount, 0);
+});
+
 // ------------------------------------------------------------- no-shows
 
 const faltas = (headers = { authorization: 'Bearer segredo-cron' }) =>

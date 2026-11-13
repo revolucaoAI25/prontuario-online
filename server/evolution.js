@@ -104,12 +104,13 @@ function messageText(message = {}) {
 
 // The phone behind a chat: classic JIDs carry it; newer "@lid" ids don't, and
 // Evolution then sends it separately.
-function phoneOf(key = {}) {
+function phoneJidOf(key = {}) {
   for (const jid of [key.remoteJid, key.remoteJidAlt, key.senderPn]) {
-    if (jid && /@s\.whatsapp\.net$/.test(jid)) return jid.split('@')[0].replace(/\D/g, '');
+    if (jid && /@s\.whatsapp\.net$/.test(jid)) return `${jid.split('@')[0].replace(/\D/g, '')}@s.whatsapp.net`;
   }
   return null;
 }
+const digitsOf = (jid) => (jid ? jid.split('@')[0] : null);
 
 // Edits and deletions travel as a "protocol" message pointing at another one.
 //   → { instance, wa_message_id, edited_body } or { instance, wa_message_id, deleted: true }
@@ -141,11 +142,14 @@ export function parseEvolutionEvent(payload) {
     const timestamp = Number(item.messageTimestamp?.low ?? item.messageTimestamp);
     // Messages read back from Evolution's store carry their receipts apart.
     const status = item.status ?? item.MessageUpdate?.at?.(-1)?.status;
+    // One conversation per phone, whichever id the contact used.
+    const phoneJid = phoneJidOf(key);
     out.push({
       instance: String(payload.instance ?? payload.instanceName ?? 'default'),
       wa_message_id: key.id,
-      remote_jid: jid,
-      phone_digits: phoneOf(key),
+      remote_jid: phoneJid ?? jid,
+      lid: /@lid$/.test(jid) ? jid : null,
+      phone_digits: digitsOf(phoneJid),
       from_me: Boolean(key.fromMe),
       push_name: key.fromMe ? null : item.pushName ?? null,
       message_type: type,
@@ -216,7 +220,9 @@ export function parseStatusEvent(payload) {
 // the system itself (its file is already in Storage); Evolution's webhook for
 // the same message may arrive before or after, and the row keeps both.
 // Returns the rows whose media still has to be downloaded.
-export async function storeEvolutionEvent(payload, { sentBy = null, media = null } = {}) {
+// `historic`: messages recovered later from Evolution's store keep their
+// own time as arrival, so days-old messages don't show up as new.
+export async function storeEvolutionEvent(payload, { sentBy = null, media = null, historic = false } = {}) {
   const connection = parseConnectionEvent(payload);
   if (connection) {
     await query(`insert into whatsapp_connection_events (instance, state, reason) values ($1, $2, $3)`,
@@ -243,6 +249,31 @@ export async function storeEvolutionEvent(payload, { sentBy = null, media = null
   }
 
   const messages = parseEvolutionEvent(payload);
+
+  // Remember which phone is behind each "@lid" id, and use it for the
+  // messages that came with the "@lid" id only.
+  const pairs = new Map(messages.filter((m) => m.lid && m.phone_digits).map((m) => [m.lid, m.remote_jid]));
+  for (const [lid, phoneJid] of pairs) {
+    await query(
+      `insert into whatsapp_lid_map (lid, phone_jid) values ($1, $2)
+       on conflict (lid) do update set phone_jid = excluded.phone_jid, updated_at = now()
+       where whatsapp_lid_map.phone_jid <> excluded.phone_jid`,
+      [lid, phoneJid],
+    );
+    // earlier messages of that contact join the phone's conversation
+    await query(`update whatsapp_messages set remote_jid = $2, phone_digits = $3, patient_id = coalesce(patient_id, match_patient_by_phone($3))
+                 where remote_jid = $1`, [lid, phoneJid, digitsOf(phoneJid)]);
+  }
+  const unknown = [...new Set(messages.filter((m) => m.lid && !m.phone_digits).map((m) => m.lid))];
+  if (unknown.length) {
+    const { rows } = await query(`select lid, phone_jid from whatsapp_lid_map where lid = any($1)`, [unknown]);
+    const known = new Map(rows.map((r) => [r.lid, r.phone_jid]));
+    for (const m of messages) {
+      const phoneJid = m.lid && !m.phone_digits ? known.get(m.lid) : null;
+      if (phoneJid) Object.assign(m, { remote_jid: phoneJid, phone_digits: digitsOf(phoneJid) });
+    }
+  }
+
   let stored = 0;
   const pending = [];
   for (const m of messages) {
@@ -250,9 +281,9 @@ export async function storeEvolutionEvent(payload, { sentBy = null, media = null
     const { rows } = await query(
       `insert into whatsapp_messages (instance, wa_message_id, remote_jid, phone_digits, patient_id, from_me,
                                       push_name, message_type, body, sent_at, raw, sent_by, status,
-                                      media_kind, media_status, media_path, media_mime, media_name, media_size)
+                                      media_kind, media_status, media_path, media_mime, media_name, media_size, created_at)
        values ($1, $2, $3, $4, match_patient_by_phone($4), $5, $6, $7, $8, $9, $10, $11, $12,
-               $13, $14, $15, $16, $17, $18)
+               $13, $14, $15, $16, $17, $18, case when $19::boolean then least(now(), $9::timestamptz) else now() end)
        on conflict (instance, wa_message_id) do update set
            sent_by = coalesce(whatsapp_messages.sent_by, excluded.sent_by),
            media_status = case when excluded.media_path is not null then 'ok' else whatsapp_messages.media_status end,
@@ -271,6 +302,7 @@ export async function storeEvolutionEvent(payload, { sentBy = null, media = null
         file?.mime ?? m.media?.mime ?? null,
         file?.name ?? m.media?.name ?? null,
         file?.size ?? m.media?.size ?? null,
+        historic,
       ],
     );
     const row = rows[0];

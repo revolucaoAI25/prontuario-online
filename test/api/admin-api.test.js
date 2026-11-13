@@ -333,6 +333,9 @@ test('WhatsApp: messages missing from the system are fetched from Evolution, onc
       message: { conversation: `mensagem ${i}` }, messageTimestamp: now - 3600 - i * 60, MessageUpdate: [{ status: 'DELIVERY_ACK' }, { status: 'READ' }],
     })),
     { key: { remoteJid: '1203630@g.us', fromMe: false, id: 'SYNCGROUP' }, message: { conversation: 'grupo' }, messageTimestamp: now - 100 },
+    // the same contact by its anonymous id: with the phone, and without it
+    { key: { remoteJid: '777@lid', fromMe: false, id: 'SYNCLID1' }, message: { conversation: 'sem telefone' }, messageTimestamp: now - 50 },
+    { key: { remoteJid: '777@lid', remoteJidAlt: '5531944441111@s.whatsapp.net', fromMe: false, id: 'SYNCLID2' }, message: { conversation: 'com telefone' }, messageTimestamp: now - 7200 },
     { key: { remoteJid: jid, fromMe: false, id: 'SYNCOLD' }, message: { conversation: 'antiga' }, messageTimestamp: now - 10 * 86400 },
   ];
   // one of them had already arrived through the webhook
@@ -343,8 +346,13 @@ test('WhatsApp: messages missing from the system are fetched from Evolution, onc
   const res = await fetch(base.replace('/admin', '/whatsapp/sincronizar'), {
     method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${rec}` }, body: JSON.stringify({ dias: 3 }),
   }).then((r) => r.json());
-  assert.equal(res.encontradas, 131, 'two pages, the group included in the count');
-  assert.equal(res.novas, 129);
+  assert.equal(res.encontradas, 133, 'two pages, the group included in the count');
+  assert.equal(res.novas, 131);
+  const lid = (await db.query(`select remote_jid from whatsapp_messages where wa_message_id like 'SYNCLID%'`)).rows;
+  assert.deepEqual(lid.map((r) => r.remote_jid), ['5531944441111@s.whatsapp.net', '5531944441111@s.whatsapp.net']);
+  // recovered messages keep their own time: old ones don't pop up as new
+  const arrival = (await db.query(`select bool_and(created_at = sent_at) as same from whatsapp_messages where wa_message_id like 'SYNC%' and wa_message_id <> 'SYNC5'`)).rows[0];
+  assert.equal(arrival.same, true);
   const rows = (await db.query(`select count(*)::int as n, count(*) filter (where status = 'lido')::int as lidas from whatsapp_messages where remote_jid = $1 and wa_message_id like 'SYNC%'`, [jid])).rows[0];
   assert.deepEqual(rows, { n: 130, lidas: 65 });
   assert.equal((await db.query(`select 1 from whatsapp_messages where wa_message_id in ('SYNCOLD', 'SYNCGROUP')`)).rowCount, 0);
