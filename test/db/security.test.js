@@ -40,20 +40,51 @@ test('staff create patients with authorship; only the admin deletes them', async
   assert.equal(byAdmin, 1);
 });
 
-test('record entries are signed by their author and only editable by them or the admin', async () => {
+test('record entries: anyone on the team corrects them, every change is kept; deleting is for the author and the admin', async () => {
   const patient = await createPatient(db, { name: 'Prontuario Teste' });
   const entry = await asUser(db, simone, () =>
     one(db, `insert into record_entries (patient_id, content) values ($1, 'Limpeza') returning *`, [patient]),
   );
   assert.equal(entry.author_id, simone);
+
+  // the reception fixes the text and the date
   const bySecretaria = await asUser(db, secretaria, async () =>
-    (await db.query(`update record_entries set content = 'alterado' where id = $1`, [entry.id])).rowCount,
+    (await db.query(`update record_entries set content = 'Limpeza de pele', entry_at = entry_at - interval '1 day' where id = $1`, [entry.id])).rowCount,
   );
-  assert.equal(bySecretaria, 0);
-  const byAdmin = await asUser(db, admin, async () =>
-    (await db.query(`update record_entries set content = 'Limpeza + Hidratação' where id = $1`, [entry.id])).rowCount,
+  assert.equal(bySecretaria, 1);
+  const fixed = await one(db, `select * from record_entries where id = $1`, [entry.id]);
+  assert.equal(fixed.content, 'Limpeza de pele');
+  assert.equal(fixed.author_id, simone, 'the author stays');
+  assert.equal(fixed.edited_by, secretaria);
+  assert.ok(fixed.edited_at);
+
+  // then the admin
+  await asUser(db, admin, () => db.query(`update record_entries set content = 'Limpeza de pele + Hidratação' where id = $1`, [entry.id]));
+  const revisions = await asUser(db, secretaria, async () =>
+    (await db.query(`select content, written_by, replaced_by from record_entry_revisions where entry_id = $1 order by id`, [entry.id])).rows,
   );
-  assert.equal(byAdmin, 1);
+  assert.deepEqual(revisions.map((r) => [r.content, r.written_by, r.replaced_by]), [
+    ['Limpeza', simone, secretaria],
+    ['Limpeza de pele', secretaria, admin],
+  ]);
+
+  // the author can't be swapped, and history can't be written by hand
+  await asUser(db, secretaria, () => db.query(`update record_entries set author_id = $2 where id = $1`, [entry.id, secretaria]));
+  assert.equal((await one(db, `select author_id from record_entries where id = $1`, [entry.id])).author_id, simone);
+  await expectDbError(
+    asUser(db, secretaria, () => db.query(`insert into record_entry_revisions (entry_id, content, entry_at) values ($1, 'x', now())`, [entry.id])),
+    'row-level security',
+  );
+
+  // a FastClinic re-import (no logged-in user) refreshes without a revision
+  await db.query(`update record_entries set content = 'importado' where id = $1`, [entry.id]);
+  assert.equal((await one(db, `select count(*)::int as n from record_entry_revisions where entry_id = $1`, [entry.id])).n, 2);
+
+  // deleting: not the reception, yes the author
+  const delSecretaria = await asUser(db, secretaria, async () => (await db.query(`delete from record_entries where id = $1`, [entry.id])).rowCount);
+  assert.equal(delSecretaria, 0);
+  const delAuthor = await asUser(db, simone, async () => (await db.query(`delete from record_entries where id = $1`, [entry.id])).rowCount);
+  assert.equal(delAuthor, 1);
 });
 
 test('the finance report is for the admin and the reception, not professionals', async () => {

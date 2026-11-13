@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, CalendarPlus, CircleDollarSign, MapPin, Maximize2, Minimize2, PanelRightClose, PanelRightOpen, Paperclip, Pencil, Trash2, UserPen, MessageCircle } from 'lucide-react';
+import { ArrowLeft, CalendarPlus, CircleDollarSign, MapPin, Maximize2, Minimize2, PanelRightClose, PanelRightOpen, Paperclip, Pencil, Trash2, UserPen, MessageCircle, X } from 'lucide-react';
 import { supabase, must } from '../lib/supabase.js';
 import { useLoad } from '../lib/hooks.js';
 import { useAuth } from '../context/AuthContext.jsx';
@@ -56,14 +56,7 @@ function Composer({ patientId, shortcuts, onSaved, focus, onToggleFocus }) {
       const entry = await must(
         supabase.from('record_entries').insert({ patient_id: patientId, entry_at: at.toISOString(), content: text.trim() }).select('id').single(),
       );
-      for (const file of files) {
-        const path = `${patientId}/${entry.id}/${Date.now()}-${file.name.replace(/[^\w.-]+/g, '_')}`;
-        const { error } = await supabase.storage.from('prontuario').upload(path, file, { contentType: file.type || undefined });
-        if (error) throw error;
-        await must(supabase.from('record_attachments').insert({
-          entry_id: entry.id, patient_id: patientId, storage_path: path, file_name: file.name, mime_type: file.type || null, size_bytes: file.size,
-        }));
-      }
+      await uploadAttachments(patientId, entry.id, files);
       setText('');
       setFiles([]);
       setDate(localDay());
@@ -118,24 +111,97 @@ function Composer({ patientId, shortcuts, onSaved, focus, onToggleFocus }) {
   );
 }
 
+async function uploadAttachments(patientId, entryId, files) {
+  for (const file of files) {
+    const path = `${patientId}/${entryId}/${Date.now()}-${file.name.replace(/[^\w.-]+/g, '_')}`;
+    const { error } = await supabase.storage.from('prontuario').upload(path, file, { contentType: file.type || undefined });
+    if (error) throw error;
+    await must(supabase.from('record_attachments').insert({
+      entry_id: entryId, patient_id: patientId, storage_path: path, file_name: file.name, mime_type: file.type || null, size_bytes: file.size,
+    }));
+  }
+}
+
+const firstName = (name) => String(name ?? '').replace(/^(Dra?\.?)\s+/i, '').split(' ')[0];
+const stamp = (at) => `${formatDay(localDay(at))} às ${localTime(at)}`;
+
+// Earlier versions of an edited entry (kept for the record).
+function Revisions({ entryId }) {
+  const { data: revisions } = useLoad(
+    () => must(supabase.from('record_entry_revisions')
+      .select('*, writer:staff!record_entry_revisions_written_by_fkey(full_name), replacer:staff!record_entry_revisions_replaced_by_fkey(full_name)')
+      .eq('entry_id', entryId).order('replaced_at', { ascending: false })),
+    [entryId],
+  );
+  if (!revisions) return <div className="small muted">Carregando…</div>;
+  return (
+    <div className="revisions">
+      {revisions.map((r) => (
+        <div key={r.id} className="revision">
+          <div className="small muted">
+            Versão de {formatDay(localDay(r.entry_at))}
+            {r.writer?.full_name ? ` · escrita por ${r.writer.full_name}` : ''}
+            {' · '}substituída por {r.replacer?.full_name ?? 'alguém da equipe'} em {stamp(r.replaced_at)}
+          </div>
+          <div className="entry-text">{r.content}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 // sameDay: another entry of the same day is right above it (several sectors
 // writing on the same visit), so it shows a "+" instead of repeating the date.
-function Entry({ entry, canEdit, onChanged, sameDay = false }) {
+// Anyone on the team corrects an entry (text, date, attachments); every
+// change is kept. Deleting is for its author and the administrator.
+function Entry({ entry, canDelete, onChanged, sameDay = false }) {
   const toast = useToast();
   const [editing, setEditing] = useState(false);
   const [text, setText] = useState(entry.content);
+  const [date, setDate] = useState(localDay(entry.entry_at));
+  const [newFiles, setNewFiles] = useState([]);
+  const [saving, setSaving] = useState(false);
+  const [history, setHistory] = useState(false);
+
+  function startEditing() {
+    setText(entry.content);
+    setDate(localDay(entry.entry_at));
+    setNewFiles([]);
+    setEditing(true);
+  }
 
   async function save() {
-    const { error } = await supabase.from('record_entries').update({ content: text.trim() }).eq('id', entry.id);
-    if (error) return toast.error(error);
-    setEditing(false);
-    onChanged();
+    if (!text.trim()) return toast.error('O registro não pode ficar vazio.');
+    setSaving(true);
+    try {
+      const changes = {};
+      if (text.trim() !== entry.content) changes.content = text.trim();
+      // a new date keeps the time of day it was written
+      if (date && date !== localDay(entry.entry_at)) changes.entry_at = zonedToUtc(date, localTime(entry.entry_at)).toISOString();
+      if (Object.keys(changes).length) await must(supabase.from('record_entries').update(changes).eq('id', entry.id));
+      if (newFiles.length) await uploadAttachments(entry.patient_id, entry.id, newFiles);
+      setEditing(false);
+      toast.info('Registro atualizado.');
+      onChanged();
+    } catch (error) {
+      toast.error(error);
+    } finally {
+      setSaving(false);
+    }
   }
 
   async function remove() {
     // eslint-disable-next-line no-alert
     if (!window.confirm('Apagar este registro do prontuário?')) return;
     const { error } = await supabase.from('record_entries').delete().eq('id', entry.id);
+    if (error) return toast.error(error);
+    onChanged();
+  }
+
+  async function removeAttachment(att) {
+    // eslint-disable-next-line no-alert
+    if (!window.confirm(`Tirar o anexo "${att.file_name}" deste registro?`)) return;
+    const { error } = await supabase.from('record_attachments').delete().eq('id', att.id);
     if (error) return toast.error(error);
     onChanged();
   }
@@ -147,34 +213,67 @@ function Entry({ entry, canEdit, onChanged, sameDay = false }) {
   }
 
   return (
-    <div className={`entry ${sameDay ? 'same-day' : ''}`} data-testid="record-entry">
+    <div className={`entry ${sameDay ? 'same-day' : ''} ${editing ? 'editing' : ''}`} data-testid="record-entry">
       <div className="entry-top">
-        {!sameDay && <span className="entry-date">{formatDay(localDay(entry.entry_at))}</span>}
-        {canEdit && !editing && (
+        {!sameDay && !editing && <span className="entry-date">{formatDay(localDay(entry.entry_at))}</span>}
+        {!editing && (
           <span className="entry-actions">
-            <button type="button" className="icon-btn" onClick={() => setEditing(true)} aria-label="Editar"><Pencil /></button>
-            <button type="button" className="icon-btn" onClick={remove} aria-label="Apagar"><Trash2 /></button>
+            <button type="button" className="btn btn-ghost btn-xs" onClick={startEditing} title="Corrigir este registro"><Pencil /> Editar</button>
+            {canDelete && <button type="button" className="icon-btn" onClick={remove} aria-label="Apagar" title="Apagar"><Trash2 /></button>}
           </span>
         )}
       </div>
       {editing ? (
-        <div className="stack" style={{ marginTop: 6 }}>
-          <textarea className="textarea" value={text} onChange={(e) => setText(e.target.value)} />
+        <div className="stack entry-edit">
           <div className="row">
-            <button type="button" className="btn btn-sm" onClick={() => { setEditing(false); setText(entry.content); }}>Cancelar</button>
-            <button type="button" className="btn btn-sm btn-primary" onClick={save}>Salvar</button>
+            <span className="small muted">Data</span>
+            <input className="input" type="date" value={date} max={localDay()} onChange={(e) => setDate(e.target.value)} style={{ width: 160 }} aria-label="Data do registro" />
+          </div>
+          <textarea className="textarea" value={text} onChange={(e) => setText(e.target.value)} autoFocus style={{ minHeight: 120 }}
+            onKeyDown={(e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) save(); if (e.key === 'Escape') setEditing(false); }} aria-label="Texto do registro" />
+          {(entry.record_attachments?.length > 0 || newFiles.length > 0) && (
+            <div className="row-wrap">
+              {entry.record_attachments?.map((a) => (
+                <span key={a.id} className="tag">
+                  <Paperclip /> {a.file_name}
+                  <button type="button" className="tag-x" onClick={() => removeAttachment(a)} aria-label={`Tirar ${a.file_name}`}><X /></button>
+                </span>
+              ))}
+              {newFiles.map((f, i) => (
+                <span key={`${f.name}${i}`} className="tag brand">
+                  <Paperclip /> {f.name}
+                  <button type="button" className="tag-x" onClick={() => setNewFiles((prev) => prev.filter((x) => x !== f))} aria-label={`Tirar ${f.name}`}><X /></button>
+                </span>
+              ))}
+            </div>
+          )}
+          <div className="row">
+            <label className="btn btn-sm">
+              <Paperclip /> Anexar
+              <input type="file" multiple hidden onChange={(e) => { setNewFiles((prev) => [...prev, ...e.target.files]); e.target.value = ''; }} />
+            </label>
+            <span className="grow" />
+            <button type="button" className="btn btn-sm" onClick={() => setEditing(false)}>Cancelar</button>
+            <button type="button" className="btn btn-sm btn-primary" disabled={saving} onClick={save}>{saving ? 'Salvando…' : 'Salvar alteração'}</button>
           </div>
         </div>
       ) : (
         <div className="entry-text">{sameDay && <span className="entry-plus" title={`Também em ${formatDay(localDay(entry.entry_at))}`}>+ </span>}{entry.content}</div>
       )}
-      {entry.record_attachments?.length > 0 && (
+      {!editing && entry.record_attachments?.length > 0 && (
         <div className="row-wrap" style={{ marginTop: 6 }}>
           {entry.record_attachments.map((a) => (
             <button key={a.id} type="button" className="btn btn-sm" onClick={() => openAttachment(a)}><Paperclip /> {a.file_name}</button>
           ))}
         </div>
       )}
+      {!editing && entry.edited_at && (
+        <div className="entry-edited">
+          Editado por {firstName(entry.editor?.full_name) || 'alguém da equipe'} em {stamp(entry.edited_at)} ·{' '}
+          <button type="button" className="link-btn" onClick={() => setHistory((v) => !v)}>{history ? 'esconder versões anteriores' : 'ver versões anteriores'}</button>
+        </div>
+      )}
+      {history && !editing && <Revisions entryId={entry.id} />}
     </div>
   );
 }
@@ -190,7 +289,7 @@ export function RecordPage() {
 
   const patientLoad = useLoad(() => must(supabase.from('patients').select('*').eq('id', patientId).single()), [patientId]);
   const entriesLoad = useLoad(
-    () => must(supabase.from('record_entries').select('*, record_attachments(*)').eq('patient_id', patientId).order('entry_at', { ascending: false })),
+    () => must(supabase.from('record_entries').select('*, record_attachments(*), editor:staff!record_entries_edited_by_fkey(full_name)').eq('patient_id', patientId).order('entry_at', { ascending: false })),
     [patientId],
   );
   const sideLoad = useLoad(async () => {
@@ -276,10 +375,10 @@ export function RecordPage() {
       <div className={`record-layout ${focus ? 'focus' : ''} ${side ? '' : 'no-side'}`}>
         <div className="card" style={{ display: 'flex', flexDirection: 'column', minHeight: 0 }}>
           <Composer patientId={patientId} shortcuts={shortcuts} onSaved={entriesLoad.reload} focus={focus} onToggleFocus={toggleFocus} />
-          <div className="row" style={{ padding: '10px 18px 0' }}>
+          <div className="row record-head" style={{ padding: '10px 18px 0' }}>
             <div className="section-title" style={{ margin: 0 }}>Prontuário · {entries.length} registros</div>
             <span className="grow" />
-            <input className="input" style={{ width: 220 }} value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="Procurar no prontuário" />
+            <input className="input record-search" style={{ width: 220 }} value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="Procurar no prontuário" />
             {!focus && (
               <button type="button" className="btn btn-sm" onClick={toggleSide} title={side ? 'Esconder o painel lateral' : 'Mostrar agendamentos e retornos'}>
                 {side ? <PanelRightClose /> : <PanelRightOpen />} {side ? 'Esconder painel' : 'Agendamentos e retornos'}
@@ -288,7 +387,7 @@ export function RecordPage() {
           </div>
           <div className="timeline scroll">
             {shown.map((entry, i) => (
-              <Entry key={entry.id} entry={entry} canEdit={isAdmin || entry.author_id === staff?.id} onChanged={entriesLoad.reload}
+              <Entry key={entry.id} entry={entry} canDelete={isAdmin || (entry.author_id && entry.author_id === staff?.id)} onChanged={entriesLoad.reload}
                 sameDay={i > 0 && localDay(shown[i - 1].entry_at) === localDay(entry.entry_at)} />
             ))}
             {entriesLoad.data && shown.length === 0 && <Empty>{filter ? 'Nada encontrado.' : 'Nenhum registro ainda.'}</Empty>}
