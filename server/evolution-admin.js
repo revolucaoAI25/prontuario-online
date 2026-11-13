@@ -9,6 +9,9 @@ import { whatsappNumber } from './patient-context.js';
 // and send text messages from the conversations screen.
 // The server URL and global key live only in server env vars.
 const WEBHOOK_EVENTS = ['MESSAGES_UPSERT', 'SEND_MESSAGE', 'MESSAGES_UPDATE'];
+// Edits, deletions and connection drops: newer Evolution servers only (an
+// older one refuses the list, and the basic events are applied instead).
+const EXTRA_EVENTS = ['MESSAGES_EDITED', 'MESSAGES_DELETE', 'CONNECTION_UPDATE'];
 
 function config() {
   return {
@@ -79,20 +82,29 @@ export async function whatsappConnect(_body, req) {
     throw new ApiError(400, 'configuracao_incompleta', 'O WhatsApp ainda não foi configurado. Fale com o suporte técnico.');
   }
   const hook = webhookUrl(req);
-  const webhook = { enabled: true, url: hook, byEvents: false, base64: false, events: WEBHOOK_EVENTS };
+  const webhook = { enabled: true, url: hook, byEvents: false, base64: false, events: [...WEBHOOK_EVENTS, ...EXTRA_EVENTS] };
 
   let state = await connectionState();
   let qr = null;
   if (state === null) {
-    const created = await evo('/instance/create', {
+    let created = await evo('/instance/create', {
       method: 'POST',
       body: { instanceName: instance, integration: 'WHATSAPP-BAILEYS', qrcode: true, webhook },
     });
+    if (created.status === 400) {
+      created = await evo('/instance/create', {
+        method: 'POST',
+        body: { instanceName: instance, integration: 'WHATSAPP-BAILEYS', qrcode: true, webhook: { ...webhook, events: WEBHOOK_EVENTS } },
+      });
+    }
     if (created.status >= 400) fail(created.status, created.json);
     qr = created.json.qrcode ?? null;
     state = 'connecting';
   } else {
-    const set = await evo(`/webhook/set/${encodeURIComponent(instance)}`, { method: 'POST', body: { webhook } });
+    let set = await evo(`/webhook/set/${encodeURIComponent(instance)}`, { method: 'POST', body: { webhook } });
+    if (set.status === 400) {
+      set = await evo(`/webhook/set/${encodeURIComponent(instance)}`, { method: 'POST', body: { webhook: { ...webhook, events: WEBHOOK_EVENTS } } });
+    }
     if (set.status >= 400) fail(set.status, set.json);
   }
 
@@ -218,7 +230,9 @@ export async function downloadMedia(messageId) {
   try {
     const { status, json } = await evo(`/chat/getBase64FromMediaMessage/${encodeURIComponent(row.instance || instance)}`, {
       method: 'POST',
-      body: { message: { key: { id: row.wa_message_id } }, convertToMp4: false },
+      // The whole message goes along, so Evolution can decrypt it even when
+      // it did not keep a copy (it only looks the id up otherwise).
+      body: { message: row.raw?.message ? { key: row.raw.key, message: row.raw.message } : { key: { id: row.wa_message_id } }, convertToMp4: false },
       timeout: 60_000,
     });
     if (status >= 400 || !json?.base64) {
@@ -254,4 +268,46 @@ export async function whatsappRetryMedia(body) {
   const result = await downloadMedia(String(body.id ?? ''));
   if (!result.ok) throw new ApiError(502, 'midia_indisponivel', `Não foi possível baixar o arquivo (${result.motivo}).`);
   return {};
+}
+
+// POST /api/whatsapp/sincronizar — fetch from Evolution's own store the
+// messages of the last days that never reached the system (webhook down,
+// server restarted...). Only adds what is missing; nothing is changed.
+const SYNC_PAGE = 100;
+const SYNC_MAX_PAGES = 40;
+const SYNC_MEDIA_NOW = 15;
+
+export async function whatsappSync(body) {
+  const { url, key, instance } = config();
+  if (!url || !key) throw new ApiError(400, 'configuracao_incompleta', 'O WhatsApp da clínica ainda não foi configurado.');
+  const days = Math.min(Math.max(Number(body.dias) || 3, 1), 15);
+  const to = new Date();
+  const from = new Date(to.getTime() - days * 86_400_000);
+  let found = 0;
+  let added = 0;
+  const media = [];
+  for (let page = 1; page <= SYNC_MAX_PAGES; page++) {
+    const { status, json } = await evo(`/chat/findMessages/${encodeURIComponent(instance)}`, {
+      method: 'POST',
+      body: { where: { messageTimestamp: { gte: from.toISOString(), lte: to.toISOString() } }, page, offset: SYNC_PAGE },
+      timeout: 30_000,
+    });
+    if (status === 404) throw new ApiError(502, 'evolution_erro', 'Este servidor do WhatsApp não permite buscar mensagens antigas.');
+    if (status >= 400) fail(status, json);
+    const box = json?.messages ?? json;
+    const records = Array.isArray(box) ? box : box?.records ?? [];
+    // Some servers ignore the date filter: stop once the page is older.
+    const inRange = records.filter((r) => Number(r?.messageTimestamp) * 1000 >= from.getTime());
+    found += inRange.length;
+    if (inRange.length) {
+      const result = await storeEvolutionEvent({ event: 'messages.set', instance, data: inRange });
+      added += result.gravadas;
+      media.push(...result.midias_pendentes);
+    }
+    const pages = Number(box?.pages) || 0;
+    if (records.length < SYNC_PAGE || inRange.length < records.length || (pages && page >= pages)) break;
+  }
+  // A few attachments now; the rest download when opened ("tentar de novo").
+  await downloadPendingMedia(media.slice(0, SYNC_MEDIA_NOW));
+  return { dias: days, encontradas: found, novas: added };
 }

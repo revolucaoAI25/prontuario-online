@@ -237,6 +237,69 @@ test('opening a conversation marks it read for the whole team', async () => {
   assert.equal(await unread(), 0);
 });
 
+test('a message that arrives late (server was offline) still counts as unread', async () => {
+  const jid = '5531955550101@s.whatsapp.net';
+  await evolution(upsert({ remoteJid: jid, fromMe: false, id: 'LATE1' }, { conversation: 'Bom dia' }));
+  await db.query(`select mark_whatsapp_read($1)`, [jid]);
+  // sent before the conversation was opened, but only reached the system now
+  await evolution(upsert({ remoteJid: jid, fromMe: false, id: 'LATE2' }, { conversation: 'Consegue às 15h?' }, { messageTimestamp: 1793000010 }));
+  const conv = await one(db, `select unread_count from whatsapp_conversations where remote_jid = $1`, [jid]);
+  assert.equal(Number(conv.unread_count), 1);
+  assert.ok((await one(db, `select whatsapp_unread_total() as n`)).n >= 1);
+});
+
+test('wrapped, template and button messages show their text; encrypted edits are skipped', async () => {
+  const jid = '5531955550202@s.whatsapp.net';
+  await evolution(upsert({ remoteJid: jid, fromMe: false, id: 'WR1' }, { ephemeralMessage: { message: { extendedTextMessage: { text: 'Mensagem temporária' } } } }, { messageType: 'ephemeralMessage' }));
+  await evolution(upsert({ remoteJid: jid, fromMe: false, id: 'WR2' }, { viewOnceMessageV2: { message: { imageMessage: { mimetype: 'image/jpeg' } } } }));
+  await evolution(upsert({ remoteJid: jid, fromMe: false, id: 'WR3' }, { templateMessage: { hydratedTemplate: { hydratedContentText: 'Seu pedido saiu', hydratedFooterText: 'Loja' } } }, { messageType: 'templateMessage' }));
+  await evolution(upsert({ remoteJid: jid, fromMe: false, id: 'WR4' }, { interactiveMessage: { nativeFlowMessage: { buttons: [] } } }, { messageType: 'interactiveMessage' }));
+  await evolution(upsert({ remoteJid: jid, fromMe: false, id: 'WR5' }, { lottieStickerMessage: { message: { stickerMessage: { mimetype: 'application/was' } } } }, { messageType: 'lottieStickerMessage' }));
+  const skipped = await evolution(upsert({ remoteJid: jid, fromMe: false, id: 'WR6' }, { secretEncryptedMessage: { encPayload: {}, secretEncType: 2 } }, { messageType: 'secretEncryptedMessage' }));
+  assert.equal(skipped.body.recebidas, 0);
+  const { rows } = await db.query(`select wa_message_id, body, media_kind from whatsapp_messages where wa_message_id like 'WR%' order by wa_message_id`);
+  assert.deepEqual(rows.map((r) => [r.wa_message_id, r.body, r.media_kind]), [
+    ['WR1', 'Mensagem temporária', null],
+    ['WR2', null, 'imagem'],
+    ['WR3', 'Seu pedido saiu\nLoja', null],
+    ['WR4', 'Mensagem com botões (abra no celular para ver as opções)', null],
+    ['WR5', null, 'figurinha'],
+  ]);
+});
+
+test('edited and deleted messages are marked, not lost', async () => {
+  const jid = '5531955550303@s.whatsapp.net';
+  await evolution(upsert({ remoteJid: jid, fromMe: false, id: 'ED1' }, { conversation: 'Quero marcar dia 12' }));
+  await evolution(upsert({ remoteJid: jid, fromMe: false, id: 'ED2' }, { conversation: 'mensagem errada' }));
+  const edit = await evolution(upsert({ remoteJid: jid, fromMe: false, id: 'ED1-EDIT' }, {
+    protocolMessage: { key: { id: 'ED1', remoteJid: jid }, type: 'MESSAGE_EDIT', editedMessage: { conversation: 'Quero marcar dia 13' } },
+  }, { messageType: 'protocolMessage' }));
+  assert.equal(edit.body.recebidas, 0, 'the edit is not a message of its own');
+  await evolution(upsert({ remoteJid: jid, fromMe: false, id: 'ED2-DEL' }, { protocolMessage: { key: { id: 'ED2', remoteJid: jid }, type: 0 } }, { messageType: 'protocolMessage' }));
+  const rows = (await db.query(`select wa_message_id, body, edited_at is not null as edited, deleted_at is not null as deleted from whatsapp_messages where wa_message_id in ('ED1','ED2') order by 1`)).rows;
+  assert.deepEqual(rows.map((r) => [r.body, r.edited, r.deleted]), [['Quero marcar dia 13', true, false], ['mensagem errada', false, true]]);
+
+  await evolution(upsert({ remoteJid: jid, fromMe: true, id: 'ED3' }, { conversation: 'ok' }));
+  await evolution({ event: 'MESSAGES_DELETE', instance: 'clinica', data: { id: 'ED3', remoteJid: jid, fromMe: true } });
+  assert.equal((await one(db, `select deleted_at is not null as d from whatsapp_messages where wa_message_id = 'ED3'`)).d, true);
+});
+
+test('connection drops are recorded, and late messages show up in the health check', async () => {
+  await evolution({ event: 'connection.update', instance: 'clinica', data: { instance: 'clinica', state: 'close', statusReason: 428 } });
+  await evolution({ event: 'CONNECTION_UPDATE', instance: 'clinica', data: { state: 'open', statusReason: 200 } });
+  const events = (await db.query(`select state, reason from whatsapp_connection_events order by id`)).rows;
+  assert.deepEqual(events.slice(-2).map((e) => [e.state, e.reason]), [['close', '428'], ['open', '200']]);
+
+  const now = Math.floor(Date.now() / 1000);
+  for (const [i, late] of [40, 35, 30].entries()) {
+    await evolution(upsert({ remoteJid: '5531955550404@s.whatsapp.net', fromMe: false, id: `HL${i}` }, { conversation: 'oi' }, { messageTimestamp: now - late * 60 }));
+  }
+  const health = await one(db, `select * from whatsapp_health()`);
+  assert.ok(health.delay_minutes >= 39, `delay ${health.delay_minutes}`);
+  assert.ok(health.late_messages >= 3);
+  assert.equal(health.last_state, 'open');
+});
+
 // ------------------------------------------------------------- no-shows
 
 const faltas = (headers = { authorization: 'Bearer segredo-cron' }) =>

@@ -69,7 +69,7 @@ function useUnreadChat(staffId, muted, mutedChannels) {
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'chat_messages' }, ({ new: m }) => {
         if (m?.author_id && m.author_id !== staffId && !mutedRef.current && !silencedRef.current.has(m.channel_id)) {
           playChime();
-          notify('Nova mensagem da equipe', m.body, () => { window.location.assign('/comunicacao'); });
+          notify('Nova mensagem da equipe', m.body, () => { window.location.assign(`/comunicacao?g=${encodeURIComponent(m.channel_id)}`); });
         }
         refresh();
       })
@@ -111,7 +111,7 @@ function useUnreadWhatsApp(muted) {
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'whatsapp_messages' }, ({ new: m }) => {
         if (m && !m.from_me && !mutedRef.current) {
           playChime();
-          notify(`WhatsApp · ${m.push_name ?? 'paciente'}`, m.body ?? 'Nova mensagem', () => { window.location.assign('/conversas'); });
+          notify(`WhatsApp · ${m.push_name ?? 'paciente'}`, m.body ?? 'Nova mensagem', () => { window.location.assign(`/conversas?c=${encodeURIComponent(m.remote_jid)}`); });
         }
         refresh();
       })

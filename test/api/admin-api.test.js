@@ -13,7 +13,7 @@ process.env.EVOLUTION_INSTANCE = 'clinica-teste';
 process.env.EVOLUTION_WEBHOOK_SECRET = 'segredo-webhook';
 
 // Minimal stand-in for an Evolution API v2 server.
-const evo = { instances: new Map(), calls: [], mediaFails: true, fetched: null };
+const evo = { instances: new Map(), calls: [], mediaFails: true, fetched: null, stored: [], oldServer: false };
 const storageDir = mkdtempSync(path.join(tmpdir(), 'storage-'));
 const evoServer = http.createServer((req, res) => {
   const chunks = [];
@@ -32,7 +32,19 @@ const evoServer = http.createServer((req, res) => {
     if (!instance) return send(404, { response: { message: ['instance does not exist'] } });
     if (action === 'connectionState') return send(200, { instance: { state: instance.state } });
     if (action === 'connect') return send(200, { base64: 'data:image/png;base64,QR2', pairingCode: 'EFGH5678' });
-    if (area === 'webhook' && action === 'set') { instance.webhook = body.webhook; return send(201, body); }
+    if (area === 'webhook' && action === 'set') {
+      if (evo.oldServer && body.webhook.events.includes('CONNECTION_UPDATE')) return send(400, { response: { message: ['events must be one of ...'] } });
+      instance.webhook = body.webhook;
+      return send(201, body);
+    }
+    if (area === 'chat' && action === 'findMessages') {
+      const { gte, lte } = body.where.messageTimestamp;
+      const all = evo.stored
+        .filter((m) => m.messageTimestamp * 1000 >= new Date(gte).getTime() && m.messageTimestamp * 1000 <= new Date(lte).getTime())
+        .sort((a, b) => b.messageTimestamp - a.messageTimestamp);
+      const records = all.slice((body.page - 1) * body.offset, body.page * body.offset);
+      return send(200, { messages: { total: all.length, pages: Math.ceil(all.length / body.offset), currentPage: body.page, records } });
+    }
     if (action === 'logout') { instance.state = 'close'; return send(200, {}); }
     if (area === 'chat' && action === 'getBase64FromMediaMessage') {
       if (body.message.key.id === 'FAILMEDIA' && evo.mediaFails) return send(400, { response: { message: ['Message not found'] } });
@@ -181,11 +193,17 @@ test('WhatsApp connection: anyone on the team can show the QR and reconnect; onl
   assert.equal(connect.body.codigo_pareamento, 'ABCD1234');
   const created = evo.instances.get('clinica-teste');
   assert.match(created.webhook.url, /\/api\/webhooks\/evolution\?secret=segredo-webhook$/);
-  assert.deepEqual(created.webhook.events, ['MESSAGES_UPSERT', 'SEND_MESSAGE', 'MESSAGES_UPDATE']);
+  assert.deepEqual(created.webhook.events, ['MESSAGES_UPSERT', 'SEND_MESSAGE', 'MESSAGES_UPDATE', 'MESSAGES_EDITED', 'MESSAGES_DELETE', 'CONNECTION_UPDATE']);
 
   const again = await wa('conectar', {}, admin);
   assert.equal(again.body.qrcode, 'data:image/png;base64,QR2', 'existing instance: fresh QR, webhook re-applied');
   assert.ok(evo.calls.some((c) => c.url === '/webhook/set/clinica-teste'));
+
+  // an older Evolution that doesn't know the newer events gets the basic ones
+  evo.oldServer = true;
+  assert.equal((await wa('conectar', {}, admin)).status, 200);
+  assert.deepEqual(created.webhook.events, ['MESSAGES_UPSERT', 'SEND_MESSAGE', 'MESSAGES_UPDATE']);
+  evo.oldServer = false;
 
   created.state = 'open';
   status = await wa('status', {}, admin);
@@ -302,4 +320,37 @@ test('WhatsApp: sending a file the browser uploaded, and a voice note', async ()
   const audioRow = (await db.query(`select media_kind, media_path from whatsapp_messages where wa_message_id = $1`, [audio.body.mensagem_id])).rows[0];
   assert.deepEqual([audioRow.media_kind, audioRow.media_path], ['audio', voice]);
   assert.ok(existsSync(path.join(storageDir, 'prontuario', voice)));
+});
+
+test('WhatsApp: messages missing from the system are fetched from Evolution, once', async () => {
+  const rec = await login('rec@t.dev');
+  evo.instances.get('clinica-teste').state = 'open';
+  const now = Math.floor(Date.now() / 1000);
+  const jid = '5531944440000@s.whatsapp.net';
+  evo.stored = [
+    ...Array.from({ length: 130 }, (_, i) => ({
+      key: { remoteJid: jid, fromMe: i % 2 === 0, id: `SYNC${i}` }, pushName: 'Dora', messageType: 'conversation',
+      message: { conversation: `mensagem ${i}` }, messageTimestamp: now - 3600 - i * 60, MessageUpdate: [{ status: 'DELIVERY_ACK' }, { status: 'READ' }],
+    })),
+    { key: { remoteJid: '1203630@g.us', fromMe: false, id: 'SYNCGROUP' }, message: { conversation: 'grupo' }, messageTimestamp: now - 100 },
+    { key: { remoteJid: jid, fromMe: false, id: 'SYNCOLD' }, message: { conversation: 'antiga' }, messageTimestamp: now - 10 * 86400 },
+  ];
+  // one of them had already arrived through the webhook
+  await fetch(`${base.replace('/admin', '/webhooks/evolution')}?secret=segredo-webhook`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ event: 'messages.upsert', instance: 'clinica-teste', data: evo.stored[5] }),
+  });
+  const res = await fetch(base.replace('/admin', '/whatsapp/sincronizar'), {
+    method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${rec}` }, body: JSON.stringify({ dias: 3 }),
+  }).then((r) => r.json());
+  assert.equal(res.encontradas, 131, 'two pages, the group included in the count');
+  assert.equal(res.novas, 129);
+  const rows = (await db.query(`select count(*)::int as n, count(*) filter (where status = 'lido')::int as lidas from whatsapp_messages where remote_jid = $1 and wa_message_id like 'SYNC%'`, [jid])).rows[0];
+  assert.deepEqual(rows, { n: 130, lidas: 65 });
+  assert.equal((await db.query(`select 1 from whatsapp_messages where wa_message_id in ('SYNCOLD', 'SYNCGROUP')`)).rowCount, 0);
+
+  const again = await fetch(base.replace('/admin', '/whatsapp/sincronizar'), {
+    method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${rec}` }, body: JSON.stringify({}),
+  }).then((r) => r.json());
+  assert.equal(again.novas, 0);
 });

@@ -9,6 +9,8 @@
   "functions": {
     "api/cron/disparos.js": { "maxDuration": 60 },
     "api/cron/faltas.js": { "maxDuration": 60 },
-    "api/cron/campanhas.js": { "maxDuration": 60 }
+    "api/cron/campanhas.js": { "maxDuration": 60 },
+    "api/whatsapp/[acao].js": { "maxDuration": 60 },
+    "api/webhooks/evolution.js": { "maxDuration": 60 }
   }
 }

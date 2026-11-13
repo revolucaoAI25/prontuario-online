@@ -530,12 +530,39 @@ input[type='checkbox'], input[type='radio'] { accent-color: var(--brand); width:
   .rail-nav { flex-direction: row; overflow-x: auto; overflow-y: hidden; padding: 4px; }
   /* the bottom menu takes its share; the page gets the rest (100% would push the top out of view) */
   .main { padding: 12px; height: auto; min-height: 0; }
+  /* Chats on a phone: the list, or the open conversation full screen (with
+     a back arrow), never both squeezed together. */
   .chat-wrap { flex-direction: column; }
-  .chat-list { width: 100%; max-height: 40%; }
+  .chat-list { width: 100%; flex: 1; }
+  .chat-wrap.thread-open .chat-list { display: none; }
+  .chat-wrap:not(.thread-open) .chat-main { display: none; }
+  .chat-page.thread-open > .topbar { display: none; }
+  .chat-page .topbar-right { flex-wrap: wrap; }
+  .chat-back { display: inline-flex !important; margin-left: -6px; }
+  .chat-head { padding: 8px 10px; gap: 8px; min-height: 54px; }
+  .chat-head .lbl { display: none; }
+  .chat-head .btn-sm { padding: 0 9px; }
+  .thread { padding: 12px 10px; }
+  .msg-group { max-width: 86%; }
+  .chat-compose { padding: 8px; gap: 6px; }
+  .chat-compose textarea { font-size: 16px; }
+  .wa-banner { font-size: 12.5px; }
+  .chat-page.thread-open .wa-banner { padding: 7px 10px; margin-bottom: 8px; }
+  .chat-page.thread-open .wa-banner .wa-long { display: none; }
+  .chat-page.thread-open .wa-banner .wa-short { display: inline; }
   .search { min-width: 0; }
 }
 
 /* ---------- WhatsApp extras ---------- */
+.chat-back { display: none; }
+.wa-banner .wa-short { display: none; }
+.wa-banner { margin-bottom: 12px; gap: 10px; flex-wrap: wrap; }
+.wa-sync { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--border); }
+.msg-note { display: flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 700; opacity: 0.75; margin-bottom: 2px; }
+.msg-note svg { width: 12px; height: 12px; }
+.msg.deleted .msg-text { opacity: 0.6; text-decoration: line-through; text-decoration-thickness: 1px; }
+.msg .edited { font-style: italic; margin-right: 2px; }
+.msg-unsupported { opacity: 0.75; font-size: 12.5px; }
 .chat-main.dragging::after { content: ''; position: absolute; inset: 8px; border: 2px dashed var(--brand); border-radius: 12px; pointer-events: none; }
 .drop-hint { position: absolute; inset: 62px 0 0; display: flex; align-items: center; justify-content: center; font-weight: 700; color: var(--brand-strong); background: rgba(241, 247, 246, 0.9); pointer-events: none; z-index: 3; }
 .tick { width: 14px; height: 14px; flex: none; margin-left: 3px; opacity: 0.9; }

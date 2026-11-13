@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import {
-  AlertCircle, Bell, BellOff, Check, CheckCheck, Clock, Download, FileText, MessageCircle, Mic, MessageCirclePlus, Paperclip, QrCode, RotateCw, Search, Send, Square, Trash2, X,
+  AlertCircle, ArrowLeft, Bell, BellOff, Check, CheckCheck, Clock, Download, FileText, History, MessageCircle, Mic, MessageCirclePlus, Paperclip, QrCode, RotateCw, Search, Send, Trash2, X,
 } from 'lucide-react';
 import { supabase, must, callApi } from '../lib/supabase.js';
 import { useCoalesced, useInterval, useLoad } from '../lib/hooks.js';
@@ -77,10 +77,15 @@ function StatusIcon({ status }) {
   return <Clock className="tick" aria-label="Enviando" />;
 }
 
+// A download still "pending" after a couple of minutes is stuck (it is only
+// tried when the message arrives): offer to try again, like a failed one.
+const isStuck = (m) => m.media_status === 'erro' || (m.media_status === 'pendente' && Date.now() - new Date(m.created_at) > 120_000);
+
 function MediaContent({ message, url, onRetry }) {
   const kind = message.media_kind;
   if (message.media_status !== 'ok') {
-    const label = { erro: 'Não foi possível baixar o arquivo.', enviando: 'Enviando…', falhou: 'Não enviado.' }[message.media_status] ?? 'Baixando arquivo…';
+    const label = isStuck(message) ? 'Não foi possível baixar o arquivo.'
+      : { enviando: 'Enviando…', falhou: 'Não enviado.' }[message.media_status] ?? 'Baixando arquivo…';
     return (
       <div className="wa-file">
         <FileText />
@@ -88,7 +93,7 @@ function MediaContent({ message, url, onRetry }) {
           <div className="nm">{MEDIA_LABEL[kind] ?? 'Arquivo'}{message.media_name ? ` · ${message.media_name}` : ''}</div>
           <div className="small">{label}</div>
         </div>
-        {message.media_status === 'erro' && (
+        {isStuck(message) && (
           <button type="button" className="icon-btn" onClick={onRetry} aria-label="Tentar baixar de novo" title="Tentar de novo"><RotateCw /></button>
         )}
       </div>
@@ -160,10 +165,43 @@ function useRecorder() {
 // delivery status. The inbox is shared by the whole team.
 const kindOfFile = (file) => (/^image\//.test(file.type) ? 'imagem' : /^video\//.test(file.type) ? 'video' : /^audio\//.test(file.type) ? 'audio' : 'documento');
 
+// Grows with the text up to a few lines (Safari has no CSS for it).
+function autoGrow(el) {
+  if (!el) return;
+  el.style.height = 'auto';
+  el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
+}
+// On phones Enter is a new line (like WhatsApp); the button sends.
+const touchScreen = () => window.matchMedia?.('(pointer: coarse)').matches;
+
+function formatDelay(minutes) {
+  if (minutes < 60) return `${minutes} min`;
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  return m ? `${h} h ${m} min` : `${h} h`;
+}
+
 export function ConversationsPage() {
   const toast = useToast();
+  const navigate = useNavigate();
   const { staff, setMute } = useAuth();
-  const [jid, setJid] = useState(null);
+  // The open conversation lives in the address (?c=…), so the phone's back
+  // button returns to the list.
+  const [params, setParams] = useSearchParams();
+  const jid = params.get('c');
+  const openedHere = useRef(false);
+  const setJid = useCallback((value) => {
+    // switching conversations, closing, or arriving from a patient's record
+    // replaces the entry; opening one from the list adds a step to go back
+    const replace = Boolean(jid) || !value || params.has('paciente');
+    if (!replace) openedHere.current = true;
+    setParams((prev) => {
+      const next = new URLSearchParams(prev);
+      if (value) next.set('c', value); else next.delete('c');
+      next.delete('paciente');
+      return next;
+    }, { replace });
+  }, [jid, params, setParams]);
   // a conversation started from a patient that has no messages yet
   const [draft, setDraft] = useState(null);
   const [picking, setPicking] = useState(false);
@@ -173,20 +211,28 @@ export function ConversationsPage() {
   const [pending, setPending] = useState([]);
   const [dragging, setDragging] = useState(false);
   const fileInput = useRef(null);
+  const composer = useRef(null);
+  const [syncing, setSyncing] = useState(false);
   const recorder = useRecorder();
   const [connection, setConnection] = useState(null);
   const [showConnection, setShowConnection] = useState(false);
   const checkConnection = useCallback(() => callApi('whatsapp/status').then(setConnection).catch(() => setConnection(null)), []);
   useEffect(() => { checkConnection(); }, [checkConnection]);
-  useInterval(checkConnection, 60000);
   const connected = connection?.estado === 'open';
+  // Messages reaching the system late = the WhatsApp server lost its connection.
+  const { data: health, reload: reloadHealth } = useLoad(() => must(supabase.rpc('whatsapp_health')).then((r) => r?.[0] ?? null), []);
+  useInterval(() => { checkConnection(); reloadHealth(); }, 60000);
+  const lateBy = health && health.late_messages >= 3 && health.delay_minutes >= 10 ? health.delay_minutes : 0;
 
   const { data: conversations = [], reload, loading: conversationsLoading } = useLoad(
     () => must(supabase.from('whatsapp_conversations').select('*').order('last_at', { ascending: false }).limit(300)),
     [],
   );
   const { data: messages = [], reload: reloadThread } = useLoad(
-    () => (jid ? must(supabase.from('whatsapp_messages').select('*, sender:staff(full_name)').eq('remote_jid', jid).order('sent_at').limit(500)) : Promise.resolve([])),
+    // the latest 500 (oldest first on screen)
+    () => (jid
+      ? must(supabase.from('whatsapp_messages').select('*, sender:staff(full_name)').eq('remote_jid', jid).order('sent_at', { ascending: false }).limit(500)).then((rows) => rows.reverse())
+      : Promise.resolve([])),
     [jid],
   );
   const urls = useSignedUrls(messages.filter((m) => m.media_status === 'ok' && m.media_path).map((m) => m.media_path));
@@ -227,13 +273,12 @@ export function ConversationsPage() {
   }, [conversations, draft]);
 
   // Opened from a patient's record or the agenda: /conversas?paciente=<id>
-  const [params, setParams] = useSearchParams();
   const fromPatient = params.get('paciente');
   useEffect(() => {
     if (!fromPatient || conversationsLoading) return;
     supabase.from('patients').select('id, full_name, phone').eq('id', fromPatient).maybeSingle().then(({ data }) => {
       if (data) startWith(data);
-      setParams({}, { replace: true });
+      else setParams({}, { replace: true });
     });
   }, [fromPatient, conversationsLoading]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -244,6 +289,30 @@ export function ConversationsPage() {
     setDraft(null);
     setJid(c.remote_jid);
     setFiles([]);
+  }
+
+  // Back to the list (phones show one or the other).
+  function close() {
+    if (draft) { setDraft(null); return; }
+    if (openedHere.current && window.history.length > 1) {
+      openedHere.current = false;
+      navigate(-1);
+    } else {
+      setJid(null);
+    }
+  }
+
+  async function syncMissing() {
+    setSyncing(true);
+    try {
+      const r = await callApi('whatsapp/sincronizar', { dias: 3 });
+      toast.info(r.novas ? `${r.novas} mensage${r.novas === 1 ? 'm que faltava foi adicionada' : 'ns que faltavam foram adicionadas'}.` : 'Nenhuma mensagem faltando nos últimos 3 dias.');
+      reload(); reloadThread(); reloadHealth();
+    } catch (error) {
+      toast.error(error);
+    } finally {
+      setSyncing(false);
+    }
   }
 
   function startWith(patient) {
@@ -258,7 +327,7 @@ export function ConversationsPage() {
     if (existing) {
       open(existing);
     } else {
-      setJid(null);
+      if (jid || params.get('paciente')) setJid(null);
       setDraft({ remote_jid: null, phone_digits: phone, patient_id: patient.id ?? null, patient_name: patient.full_name || phone });
     }
   }
@@ -298,6 +367,7 @@ export function ConversationsPage() {
     const queue = files;
     setText('');
     setFiles([]);
+    requestAnimationFrame(() => autoGrow(composer.current));
     if (queue.length === 0) {
       await deliver(tempMessage({ body }), () => callApi('whatsapp/enviar', { ...to, texto: body }));
       return;
@@ -361,8 +431,10 @@ export function ConversationsPage() {
     isMine: (m) => m.from_me,
   });
 
+  const threadOpen = Boolean(current);
+
   return (
-    <div className="page">
+    <div className={`page chat-page ${threadOpen ? 'thread-open' : ''}`}>
       <header className="topbar">
         <div>
           <h1>WhatsApp</h1>
@@ -383,14 +455,31 @@ export function ConversationsPage() {
         </div>
       </header>
       {connection?.configurado && !connected && (
-        <div className="banner row" style={{ marginBottom: 12 }}>
-          <span className="grow">O WhatsApp da clínica está desconectado. Mensagens novas não chegam nem saem até conectar de novo.</span>
+        <div className="banner row wa-banner">
+          <span className="grow wa-long">O WhatsApp da clínica está desconectado. Mensagens novas não chegam nem saem até conectar de novo.</span>
+          <span className="grow wa-short">WhatsApp desconectado.</span>
           <button type="button" className="btn btn-sm btn-primary" onClick={() => setShowConnection(true)}><QrCode /> Conectar</button>
+        </div>
+      )}
+      {connected && lateBy > 0 && (
+        <div className="banner row wa-banner">
+          <span className="grow wa-long">
+            As mensagens estão chegando aqui com atraso (até {formatDelay(lateBy)}). O servidor do WhatsApp está perdendo a conexão.
+            Até normalizar, confira as conversas mais recentes no celular da clínica.
+          </span>
+          <span className="grow wa-short">Mensagens chegando com atraso (até {formatDelay(lateBy)}). Confira no celular da clínica.</span>
+          <button type="button" className="btn btn-sm wa-long" disabled={syncing} onClick={syncMissing}><History /> {syncing ? 'Buscando…' : 'Buscar o que faltou'}</button>
         </div>
       )}
       {showConnection && (
         <Modal title="Conexão do WhatsApp" onClose={() => { setShowConnection(false); checkConnection(); }}>
           <WhatsAppConnection onStatus={setConnection} autoConnect={!connected} />
+          {connected && (
+            <div className="wa-sync">
+              <div className="small muted grow">Alguma mensagem que está no celular não apareceu aqui? O sistema busca no servidor do WhatsApp as dos últimos 3 dias que faltarem.</div>
+              <button type="button" className="btn btn-sm" disabled={syncing} onClick={syncMissing}><History /> {syncing ? 'Buscando…' : 'Buscar mensagens que faltaram'}</button>
+            </div>
+          )}
         </Modal>
       )}
       {picking && (
@@ -399,7 +488,7 @@ export function ConversationsPage() {
           <PatientPicker value={null} onChange={startWith} autoFocus />
         </Modal>
       )}
-      <div className="chat-wrap">
+      <div className={`chat-wrap ${threadOpen ? 'thread-open' : ''}`}>
         <div className="card chat-list">
           <div className="chat-list-head">
             <div className="search"><Search /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Buscar por nome ou telefone" /></div>
@@ -438,12 +527,13 @@ export function ConversationsPage() {
           {current ? (
             <>
               <div className="chat-head">
+                <button type="button" className="icon-btn chat-back" onClick={close} aria-label="Voltar para as conversas"><ArrowLeft /></button>
                 <Avatar name={name(current)} />
                 <div className="grow" style={{ minWidth: 0 }}>
                   <h3>{name(current)}</h3>
                   <div className="small muted tnum">{formatPhone(current.phone_digits)}{current.patient_name && current.push_name && current.push_name !== current.patient_name ? ` · no WhatsApp: ${current.push_name}` : ''}</div>
                 </div>
-                {current.patient_id && <Link className="btn btn-sm" to={`/prontuario/${current.patient_id}`}><FileText /> Prontuário</Link>}
+                {current.patient_id && <Link className="btn btn-sm" to={`/prontuario/${current.patient_id}`} title="Abrir o prontuário"><FileText /> <span className="lbl">Prontuário</span></Link>}
               </div>
               <div className="thread" ref={thread.ref} onScroll={thread.onScroll}>
                 {shownMessages.length === 0 && <Empty icon={MessageCircle}>Nenhuma mensagem ainda. Escreva abaixo para começar.</Empty>}
@@ -453,11 +543,13 @@ export function ConversationsPage() {
                   <div key={item.key} className={`msg-group ${item.mine ? 'out' : 'in'}`}>
                     {item.mine && item.messages[0].sender?.full_name && <span className="who">{item.messages[0].sender.full_name}</span>}
                     {item.messages.map((m) => (
-                      <div key={m.id} className={`msg ${m.from_me ? 'out' : 'in'} ${m.media_kind ? 'has-media' : ''} ${m.pending && !m.failed ? 'pending' : ''} ${m.failed ? 'failed' : ''}`}
+                      <div key={m.id} className={`msg ${m.from_me ? 'out' : 'in'} ${m.media_kind ? 'has-media' : ''} ${m.pending && !m.failed ? 'pending' : ''} ${m.failed ? 'failed' : ''} ${m.deleted_at ? 'deleted' : ''}`}
                         onClick={m.failed ? () => dismissFailed(m) : undefined} title={m.failed ? 'Não enviada — clique para remover' : undefined}>
+                        {m.deleted_at && <div className="msg-note"><Trash2 /> Apagada no WhatsApp{m.from_me ? '' : ' pelo paciente'}</div>}
                         {m.media_kind && <MediaContent message={m} url={urls[m.media_path]} onRetry={() => retryMedia(m.id)} />}
-                        {m.body ? <div className="msg-text">{m.body}</div> : !m.media_kind && <i>Mensagem não suportada</i>}
+                        {m.body ? <div className="msg-text">{m.body}</div> : !m.media_kind && <i className="msg-unsupported">Tipo de mensagem que o sistema não mostra. Veja no celular da clínica.</i>}
                         <span className="meta">
+                          {m.edited_at && <span className="edited">editada · </span>}
                           {m.failed ? 'Não enviada' : localTime(m.sent_at)}
                           {m.from_me && !m.failed && <StatusIcon status={m.status} />}
                         </span>
@@ -489,13 +581,14 @@ export function ConversationsPage() {
                   <>
                     <button type="button" className="icon-btn" onClick={() => fileInput.current?.click()} aria-label="Anexar arquivo" title="Anexar foto, vídeo ou documento"><Paperclip /></button>
                     <textarea
+                      ref={composer}
                       className="input"
                       rows={1}
                       value={text}
                       maxLength={4096}
-                      onChange={(e) => setText(e.target.value)}
+                      onChange={(e) => { setText(e.target.value); autoGrow(e.target); }}
                       onPaste={(e) => { if (e.clipboardData.files.length) { e.preventDefault(); addFiles(e.clipboardData.files); } }}
-                      onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }}
+                      onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey && !touchScreen()) { e.preventDefault(); send(); } }}
                       placeholder={files.length ? 'Legenda (opcional)' : 'Mensagem'}
                       aria-label="Mensagem de WhatsApp"
                     />

@@ -1,7 +1,7 @@
 import { apiRouter, ApiError } from '../../server/http.js';
 import { staffFromRequest } from '../../server/supabase-admin.js';
 import {
-  whatsappSend, whatsappRetryMedia, whatsappStatus, whatsappConnect, whatsappDisconnect,
+  whatsappSend, whatsappRetryMedia, whatsappStatus, whatsappConnect, whatsappDisconnect, whatsappSync,
 } from '../../server/evolution-admin.js';
 
 const adminOnly = (route) => (body, req, staff) => {
@@ -16,6 +16,7 @@ export default apiRouter(
   {
     enviar: whatsappSend,
     midia: whatsappRetryMedia,
+    sincronizar: whatsappSync,
     status: whatsappStatus,
     conectar: whatsappConnect,
     desconectar: adminOnly(whatsappDisconnect),

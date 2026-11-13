@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { Bell, BellOff, MessagesSquare, Plus, Search, Send, Settings2, Trash2 } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import { ArrowLeft, Bell, BellOff, MessagesSquare, Plus, Search, Send, Settings2, Trash2 } from 'lucide-react';
 import { ChatGroupModal } from './ChatGroupModal.jsx';
 import { supabase, must } from '../lib/supabase.js';
 import { useInterval, useLoad } from '../lib/hooks.js';
@@ -21,7 +22,29 @@ export function ChatPage() {
   const silenced = new Set(staff?.chat_muted_channels ?? []);
   const [managing, setManaging] = useState(null); // null | 'new' | channel
   const toast = useToast();
-  const [channelId, setChannelId] = useState(null);
+  // The open group lives in the address (?g=…), so the phone's back button
+  // returns to the list.
+  const navigate = useNavigate();
+  const [params, setParams] = useSearchParams();
+  const channelId = params.get('g');
+  const openedHere = useRef(false);
+  const setChannelId = useCallback((value) => {
+    const replace = Boolean(channelId) || !value;
+    if (!replace) openedHere.current = true;
+    setParams((prev) => {
+      const next = new URLSearchParams(prev);
+      if (value) next.set('g', value); else next.delete('g');
+      return next;
+    }, { replace });
+  }, [channelId, setParams]);
+  function close() {
+    if (openedHere.current && window.history.length > 1) {
+      openedHere.current = false;
+      navigate(-1);
+    } else {
+      setChannelId(null);
+    }
+  }
   const [query, setQuery] = useState('');
   const [text, setText] = useState('');
   const [pending, setPending] = useState([]);
@@ -130,14 +153,14 @@ export function ChatPage() {
   });
 
   return (
-    <div className="page">
+    <div className={`page chat-page ${current ? 'thread-open' : ''}`}>
       <header className="topbar">
         <div>
           <h1>Equipe</h1>
           <div className="sub">Conversas internas por setor</div>
         </div>
       </header>
-      <div className="chat-wrap">
+      <div className={`chat-wrap ${current ? 'thread-open' : ''}`}>
         <div className="card chat-list">
           <div className="chat-list-head row">
             <div className="search grow"><Search /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Buscar grupo" /></div>
@@ -171,14 +194,15 @@ export function ChatPage() {
           {current ? (
             <>
               <div className="chat-head">
+                <button type="button" className="icon-btn chat-back" onClick={close} aria-label="Voltar para os grupos"><ArrowLeft /></button>
                 <span className="channel-dot" style={{ background: channelColor(current) }} />
-                <div className="grow">
+                <div className="grow" style={{ minWidth: 0 }}>
                   <h3>{current.name}</h3>
                   <div className="small muted">{current.everyone ? 'Toda a equipe' : current.agenda_id ? 'Grupo da agenda' : 'Grupo da equipe'}</div>
                 </div>
                 <button type="button" className={`btn btn-sm ${silenced.has(current.id) ? 'muted' : ''}`} onClick={() => toggleSilenced(current)}
                   title={silenced.has(current.id) ? 'Este grupo não toca som nem aparece no menu para você. Clique para voltar a avisar.' : 'Parar de receber som e aviso deste grupo (só para você). As mensagens continuam aqui.'}>
-                  {silenced.has(current.id) ? <><BellOff /> Avisos desligados</> : <><Bell /> Avisos ligados</>}
+                  {silenced.has(current.id) ? <><BellOff /> <span className="lbl">Avisos desligados</span></> : <><Bell /> <span className="lbl">Avisos ligados</span></>}
                 </button>
                 {isAdmin && <button type="button" className="icon-btn ghost" onClick={() => setManaging(current)} title="Editar grupo" aria-label="Editar grupo"><Settings2 /></button>}
               </div>
