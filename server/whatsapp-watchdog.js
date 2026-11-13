@@ -20,6 +20,7 @@ const SILENCE_MIN = 20; // no message at all for this long, while open
 const RESTART_EVERY_MIN = 6; // while messages arrive late (draining)
 const SILENT_RESTART_EVERY_MIN = 15; // silence alone (could be a quiet hour)
 const MAX_RESTARTS = 5; // late after this many restarts in an hour → new QR
+const SETTLE_MIN = 15; // after a new QR Code, old messages flow in: not a problem
 
 // Opening hours (Brazil time): silence outside them is normal.
 function isOpeningHours(now = new Date()) {
@@ -76,8 +77,16 @@ export async function whatsappWatchdog({ now = new Date() } = {}) {
   );
   const lastArrival = signs?.last_arrival ? new Date(signs.last_arrival) : null;
   const silentFor = lastArrival ? (now - lastArrival) / 60_000 : Infinity;
-  const late = signs?.late > 0 || added > 0;
-  const silent = isOpeningHours(now) && silentFor > SILENCE_MIN;
+  // Right after a new pairing, WhatsApp hands over what it was holding:
+  // late by nature, and no reason to restart or raise the alarm.
+  const paired = await queryOne(
+    `select max(at) as at from whatsapp_connection_events where state = 'close' and at > now() - make_interval(mins => $1)`,
+    [SETTLE_MIN],
+  );
+  const settling = Boolean(paired?.at);
+  // (messages the sync just added point at the webhook, not the connection)
+  const late = !settling && signs?.late > 0;
+  const silent = !settling && isOpeningHours(now) && silentFor > SILENCE_MIN;
   const unhealthy = state !== 'open' || late || silent;
   const wait = (late || state !== 'open' ? RESTART_EVERY_MIN : SILENT_RESTART_EVERY_MIN) * 60_000;
 
@@ -108,6 +117,8 @@ export async function whatsappWatchdog({ now = new Date() } = {}) {
   } else if (state !== 'open') {
     status = 'travado';
     detail = 'Conexão instável; reiniciando.';
+  } else if (settling) {
+    detail = 'Reconectado há pouco; recebendo as mensagens que estavam guardadas.';
   } else if (silent) {
     detail = `Sem mensagens há ${Math.round(silentFor)} min${restarted ? '; conexão reiniciada por precaução' : ''}.`;
   }

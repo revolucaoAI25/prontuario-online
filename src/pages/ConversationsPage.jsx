@@ -222,6 +222,8 @@ export function ConversationsPage() {
   // Messages reaching the system late = the WhatsApp server lost its connection.
   const { data: health, reload: reloadHealth } = useLoad(() => must(supabase.rpc('whatsapp_health')).then((r) => r?.[0] ?? null), []);
   useInterval(() => { checkConnection(); reloadHealth(); }, 60000);
+  // while it shows "disconnected", look again sooner (it may be reconnecting)
+  useInterval(() => { if (connection?.configurado && connection.estado !== 'open') checkConnection(); }, 15000);
   const lateBy = health && health.late_messages >= 3 && health.delay_minutes >= 10 ? health.delay_minutes : 0;
   // the watchdog says only a new QR Code will fix it
   const stuck = health?.watch_status === 'precisa_reconectar';

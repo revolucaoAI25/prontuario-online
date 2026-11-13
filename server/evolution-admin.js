@@ -90,6 +90,8 @@ export async function whatsappConnect(body, req) {
     const out = await evo(`/instance/logout/${encodeURIComponent(instance)}`, { method: 'DELETE' });
     if (out.status >= 400 && out.status !== 404) fail(out.status, out.json);
     await query(`insert into whatsapp_connection_events (instance, state, reason) values ($1, 'close', 'novo QR Code pedido no sistema')`, [instance]);
+    // a fresh start for the watchdog
+    await query(`update whatsapp_watchdog set restarts = '{}', status = 'ok', detail = null where id = 1`);
   }
 
   let state = await connectionState();

@@ -381,6 +381,7 @@ test('WhatsApp watchdog: fills gaps, restarts a stuck connection, and asks for a
   const status = async () => (await db.query(`select * from whatsapp_watchdog`)).rows[0];
   await db.query(`update whatsapp_watchdog set restarts = '{}'`);
   await db.query(`delete from whatsapp_messages`);
+  await db.query(`delete from whatsapp_connection_events`);
   evo.stored = [];
   evo.restarts = 0;
 
@@ -437,6 +438,17 @@ test('WhatsApp watchdog: fills gaps, restarts a stuck connection, and asks for a
   assert.equal(r.status, 'ok');
   assert.equal(evo.restarts, 1);
   assert.match((await status()).detail, /Sem mensagens há/);
+  // right after a new QR Code, old messages flowing in are expected
+  await db.query(`update whatsapp_watchdog set restarts = $1`, [recent]);
+  await db.query(`insert into whatsapp_connection_events (instance, state, reason) values ('clinica-teste', 'close', 'novo QR Code pedido no sistema')`);
+  evo.restarts = 0;
+  await hook('WD3', now - 90 * 60);
+  r = await whatsappWatchdog();
+  assert.equal(r.status, 'ok');
+  assert.equal(evo.restarts, 0);
+  assert.match((await status()).detail, /Reconectado há pouco/);
+  await db.query(`delete from whatsapp_connection_events`);
+  await db.query(`update whatsapp_messages set created_at = sent_at`);
   // and on a Sunday, silence is normal
   evo.restarts = 0;
   await db.query(`update whatsapp_watchdog set restarts = '{}'`);
