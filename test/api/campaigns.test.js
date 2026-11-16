@@ -141,11 +141,15 @@ test('the pace: a batch per window, then it waits for the next window', async ()
   assert.equal(received.length, 2);
   const p = received[0];
   assert.equal(p.tipo, 'campanha');
-  assert.equal(p.campanha.nome, 'Ritmo');
-  assert.equal(p.campanha.mensagem, 'Oferta de novembro');
-  assert.match(p.paciente.whatsapp, /^55319800001/);
+  assert.equal(p.campanha, 'Ritmo');
+  assert.equal(p.mensagem, 'Oferta de novembro');
+  assert.match(p.telefone, /^55319800001/);
+  assert.match(p.nome, / Ritmo$/);
   assert.equal(p.tentativa, 1);
-  assert.ok('historico' in p && 'resumo' in p);
+  assert.equal(p.total_visitas, 0);
+  assert.equal(p.ultima_visita, '');
+  assert.match(p.resumo, /Ainda não veio à clínica\. Nada agendado\.$/);
+  assert.ok(Object.values(p).every((v) => ['string', 'number', 'boolean'].includes(typeof v)), 'flat: no nested objects');
   const campaign = await one(db, `select * from campaigns where id = $1`, [c.id]);
   const wait = (campaign.next_send_at - campaign.window_started_at) / 60000;
   assert.equal(Math.round(wait), 60, 'next one an hour after the window started');
@@ -243,19 +247,21 @@ test('the database job calls the server only when a message is due', async () =>
   await db.query(`update settings set value = 'null' where key = 'app_url'`);
 });
 
-test('a webhook that does not answer in time is not sent again (it may have arrived)', async () => {
+test('a webhook that does not answer in time counts as sent without confirmation, never twice', async () => {
   const c = await newCampaign({ name: 'Lenta', batch: 10 });
   await createPatient(db, { name: 'Rita Lenta', phone: '(31) 98000-0401' });
   await fill(c.id, { busca: 'Lenta' });
   await db.query(`update campaigns set status = 'cancelada' where id <> $1 and status = 'enviando'`, [c.id]);
   await start(c.id);
   slowNext = 1;
-  assert.equal((await run()).body.campanhas.falhas, 1);
+  assert.equal((await run()).body.campanhas.enviados, 1);
   const r = await one(db, `select * from campaign_recipients where campaign_id = $1`, [c.id]);
-  assert.equal(r.status, 'erro', 'no retry: the patient could get it twice');
-  assert.match(r.last_error, /não respondeu em/);
-  assert.match(r.last_error, /não foi reenviado/);
-  assert.equal(received.length, 1);
+  assert.equal(r.status, 'enviado');
+  assert.ok(r.sent_at);
+  assert.match(r.last_error, /sem confirmação/);
+  assert.equal((await one(db, `select status from campaigns where id = $1`, [c.id])).status, 'concluida');
+  await run();
+  assert.equal(received.length, 1, 'never sent again');
   assert.equal(received[0].teste, false);
 });
 
@@ -270,15 +276,23 @@ test('"Enviar teste": the webhook gets a made-up patient with teste: true; only 
   assert.equal(ok.status_http, 200);
   assert.equal(ok.resposta, '{"recebido":true}');
   const sent = received.at(-1);
+  // one flat level: every field is text or a number
+  assert.deepEqual(Object.keys(sent), [
+    'tipo', 'teste', 'campanha', 'mensagem', 'envio_id', 'tentativa', 'nome', 'primeiro_nome', 'telefone', 'idade',
+    'ultima_visita', 'dias_desde_ultima_visita', 'ultima_visita_agenda', 'ultima_visita_procedimentos', 'total_visitas',
+    'procedimentos_realizados', 'retornos_pendentes', 'proximo_agendamento', 'resumo', 'paciente_id', 'campanha_id',
+  ]);
+  assert.ok(Object.values(sent).every((v) => ['string', 'number', 'boolean'].includes(typeof v)));
   assert.equal(sent.teste, true);
-  assert.equal(sent.tipo, 'campanha');
-  assert.deepEqual(sent.campanha, { id: '00000000-0000-0000-0000-000000000000', nome: 'Black Friday', mensagem: 'Oferta' });
-  assert.equal(sent.paciente.whatsapp, '5531999991234', 'your phone, to see it arrive');
-  // same keys as a real send
-  assert.deepEqual(Object.keys(sent).sort(), ['agendamentos_futuros', 'campanha', 'envio_id', 'historico', 'paciente', 'resumo', 'retornos_pendentes', 'tentativa', 'teste', 'tipo']);
+  assert.equal(sent.campanha, 'Black Friday');
+  assert.equal(sent.mensagem, 'Oferta');
+  assert.equal(sent.telefone, '5531999991234', 'your phone, to see it arrive');
+  assert.equal(sent.ultima_visita_procedimentos, 'Botox');
+  assert.match(sent.ultima_visita, /^\d{2}\/\d{2}\/\d{4}$/);
+  assert.match(sent.resumo, /^Paciente Teste da Silva, 36 anos\. 3 visita\(s\); a última em/);
 
   const fictitious = await testCampaignWebhook({ url: hookUrl }, null, await staff(superadmin));
-  assert.equal(fictitious.enviado.paciente.whatsapp, '5531900000000');
+  assert.equal(fictitious.enviado.telefone, '5531900000000');
 
   failNext = 1;
   const failed = await testCampaignWebhook({ url: hookUrl }, null, await staff(superadmin));

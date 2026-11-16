@@ -2,6 +2,7 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
 import { query } from './db.js';
 import { APPOINTMENT_GROUP, APPOINTMENT_SELECT, formatAppointment } from './scheduling.js';
 import { patientContexts } from './patient-context.js';
+import { campaignPayload } from './campaign-payload.js';
 
 const BATCH = 50;
 const CONCURRENCY = 5;
@@ -260,28 +261,26 @@ export async function dispatchCampaigns({ deadline = Date.now() + 50_000 } = {})
       const ctx = contexts.get(row.patient_id);
       try {
         if (!ctx) throw new Error('paciente não encontrado');
-        await postWebhook(row.webhook_url, {
-          tipo: 'campanha',
-          teste: false,
-          campanha: { id: row.campaign_id, nome: row.campaign_name, mensagem: row.campaign_message ?? null },
-          envio_id: row.recipient_id,
-          tentativa: row.attempts,
-          paciente: ctx.paciente,
-          agendamentos_futuros: ctx.agendamentos_futuros,
-          retornos_pendentes: ctx.retornos_pendentes,
-          historico: ctx.historico,
-          resumo: ctx.resumo,
-        }, { timeoutMs: campaignTimeoutMs() });
+        await postWebhook(row.webhook_url, campaignPayload({
+          campaign: { id: row.campaign_id, name: row.campaign_name, message: row.campaign_message },
+          recipientId: row.recipient_id,
+          attempt: row.attempts,
+          ctx,
+        }), { timeoutMs: campaignTimeoutMs() });
         await query(`select mark_campaign_sent($1)`, [row.recipient_id]);
         result.enviados++;
       } catch (error) {
-        // No answer in time: it may have been received, and sending again
-        // could message the patient twice. Left as an error to check.
-        const message = error.uncertain
-          ? `${error.message}; pode ter chegado, não foi reenviado para não duplicar`
-          : error.message;
-        await query(`select mark_campaign_failed($1, $2, $3)`, [row.recipient_id, message, Boolean(error.uncertain)]);
-        result.falhas++;
+        if (error.uncertain) {
+          // The webhook took the message but didn't answer in time (some,
+          // like Chatflux, only answer after running their actions, or
+          // never). Counted as sent, without confirmation; never sent
+          // again, so the patient doesn't get it twice.
+          await query(`select mark_campaign_unconfirmed($1, $2)`, [row.recipient_id, `${error.message}; enviado sem confirmação`]);
+          result.enviados++;
+        } else {
+          await query(`select mark_campaign_failed($1, $2)`, [row.recipient_id, error.message]);
+          result.falhas++;
+        }
       }
     });
   }

@@ -272,26 +272,45 @@ a mensagem.
   minutos, 30–60 s entre elas, das 9h às 19h, de segunda a sábado.
 - Iniciar, pausar, retomar e cancelar a qualquer momento. "Ver envios" mostra quem já recebeu, quem está
   na fila e os erros; dá para tirar alguém da fila.
-- Falha (resposta fora de `2xx` ou 10 s sem resposta): tenta de novo 5 minutos depois, até 3 vezes.
+- **Testar antes:** "Enviar teste" (na campanha ou no cartão dela) manda o mesmo JSON com um paciente
+  fictício e `"teste": true`; com o seu telefone no campo opcional, a mensagem chega para você. A tela
+  mostra o que o webhook respondeu e em quanto tempo.
+- **Resposta:** o webhook tem 30 s para responder. Resposta fora de `2xx` ou endereço fora do ar: tenta
+  de novo 5 minutos depois, até 3 vezes. Sem resposta em 30 s (o Chatflux, por exemplo, só responde
+  depois de rodar as ações): conta como **enviado sem confirmação** e **nunca é reenviado**, para o
+  paciente não receber duas vezes.
 - Quem dispara é o próprio banco (Supabase, `pg_cron`), que confere a cada 10 segundos se há mensagem
-  na hora e chama `/api/cron/campanhas`. Iniciar uma campanha pela tela grava o endereço do sistema que
-  esse job usa.
+  na hora e chama `/api/cron/campanhas`.
+
+Um nível só, com texto ou número em cada campo (fácil de usar como variável no Chatflux/n8n). Datas em
+dd/mm/aaaa; o que não existe vem como texto vazio.
 
 ```json
 {
   "tipo": "campanha",
-  "campanha": { "id": "…", "nome": "Retorno Estética novembro",
-                "mensagem": "Convidar para limpeza de pele com 15% de desconto até 30/11." },
+  "teste": false,
+  "campanha": "Black Friday",
+  "mensagem": "Botox com 20% até 30/11",
   "envio_id": "…",
   "tentativa": 1,
-  "paciente": { "id": "…", "nome": "Juliana Gomes Lacerda", "primeiro_nome": "Juliana",
-                "telefone": "(31) 99743-9219", "whatsapp": "5531997439219", "…": "…" },
-  "agendamentos_futuros": [],
-  "retornos_pendentes": [],
-  "historico": { "total_atendimentos": 5, "…": "…" },
-  "resumo": "Juliana Gomes Lacerda, 29 anos. Paciente desde 2026, 5 atendimento(s); último em 26/10/2026…"
+  "nome": "Vanessa Pereira Fonseca",
+  "primeiro_nome": "Vanessa",
+  "telefone": "5531992783288",
+  "idade": 48,
+  "ultima_visita": "27/10/2026",
+  "dias_desde_ultima_visita": 20,
+  "ultima_visita_agenda": "Estética",
+  "ultima_visita_procedimentos": "Limpeza de pele",
+  "total_visitas": 10,
+  "procedimentos_realizados": "Limpeza de pele (3x), Depilação a laser (2x), Botox (1x)",
+  "retornos_pendentes": "Depilação a laser (previsto para 22/12/2026)",
+  "proximo_agendamento": "",
+  "resumo": "Vanessa Pereira Fonseca, 48 anos. 10 visita(s); a última em 27/10/2026 (Estética: Limpeza de pele). Já fez: … Nada agendado.",
+  "paciente_id": "…",
+  "campanha_id": "…"
 }
 ```
 
-`mensagem` é o texto livre da campanha (oferta, instrução para a IA). Com `WEBHOOK_SIGNING_SECRET`
+`telefone` já vem no formato do WhatsApp (55 + DDD + número). `retornos_pendentes` traz os 3 mais
+próximos. `mensagem` é o texto livre da campanha (oferta, instrução para a IA). Com `WEBHOOK_SIGNING_SECRET`
 definido, também vem `x-clinica-assinatura`.

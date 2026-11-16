@@ -275,12 +275,12 @@ function WebhookTester({ url, name, message }) {
               {result.recebido
                 ? `Webhook recebeu: resposta ${result.status_http} em ${secs(result.tempo_ms)}`
                 : result.incerto
-                  ? `${result.erro}. Em um disparo, esse paciente não seria reenviado (pode ter chegado).`
+                  ? `${result.erro}. Confira se chegou: em um disparo, isso conta como enviado sem confirmação (não reenvia).`
                   : `Falhou: ${result.erro}${result.tempo_ms != null ? ` (${secs(result.tempo_ms)})` : ''}`}
             </b>
           </div>
           {result.recebido && result.tempo_ms > 20000 && (
-            <div className="small">Demorou para responder. Acima de 30 s o disparo considera que falhou: ajuste o webhook para responder logo (e processar depois).</div>
+            <div className="small">Demorou para responder. Acima de 30 s o disparo conta como enviado sem confirmação (e não reenvia).</div>
           )}
           {result.resposta && <pre className="webhook-pre">{result.resposta}</pre>}
           {result.enviado && (
@@ -440,6 +440,7 @@ function RecipientsModal({ campaign, onClose, onChanged }) {
                     {{ pendente: 'Na fila', enviado: 'Enviado', erro: 'Erro', removido: 'Tirado' }[r.status]}
                   </span>
                   {r.last_error && r.status !== 'enviado' && <div className="small muted" title={r.last_error}>{r.attempts}ª tentativa: {r.last_error.slice(0, 60)}</div>}
+                  {r.last_error && r.status === 'enviado' && <div className="small muted" title={r.last_error}>sem confirmação do webhook (não reenviado)</div>}
                 </td>
                 <td className="small">{r.sent_at ? formatDateTime(r.sent_at) : '—'}</td>
                 <td>{r.status === 'pendente' && <button type="button" className="btn btn-sm btn-ghost" onClick={() => remove(r)}>Tirar</button>}</td>
