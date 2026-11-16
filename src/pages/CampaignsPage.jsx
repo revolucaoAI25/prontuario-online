@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Ban, Megaphone, Pause, Pencil, Play, Plus, Search, Trash2, Users, X } from 'lucide-react';
-import { supabase, must } from '../lib/supabase.js';
+import { Ban, CheckCircle2, Megaphone, Pause, Pencil, Play, Plus, Search, Send, Trash2, Users, X, XCircle } from 'lucide-react';
+import { supabase, must, callApi } from '../lib/supabase.js';
 import { useInterval, useLoad } from '../lib/hooks.js';
 import { useToast } from '../context/ToastContext.jsx';
 import { formatDay, formatDateTime, localDay } from '../lib/time.js';
@@ -235,6 +235,73 @@ const DEFAULTS = {
   hour_start: '08:00', hour_end: '20:00', weekdays: [1, 2, 3, 4, 5, 6],
 };
 
+// "Enviar teste": the webhook gets the same JSON as a real send, with a
+// made-up patient and "teste": true; optionally your phone, to see the
+// message arrive. Shows what came back and what was sent.
+function WebhookTester({ url, name, message }) {
+  const [phone, setPhone] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState(null);
+  const [showJson, setShowJson] = useState(false);
+
+  async function run() {
+    setBusy(true);
+    setResult(null);
+    try {
+      setResult(await callApi('admin/testar_webhook_campanha', { url: url.trim(), nome: name, mensagem: message, telefone: phone.trim() || undefined }));
+    } catch (error) {
+      setResult({ recebido: false, erro: error.message });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const secs = (ms) => `${(ms / 1000).toFixed(1).replace('.', ',')} s`;
+  return (
+    <div className="webhook-test">
+      <div className="row-wrap" style={{ gap: 8 }}>
+        <input className="input" style={{ width: 230 }} value={phone} onChange={(e) => setPhone(e.target.value)} inputMode="tel"
+          placeholder="Seu WhatsApp (opcional)" aria-label="Telefone para o teste" />
+        <button type="button" className="btn btn-sm" disabled={busy || !/^https?:\/\//.test(url.trim())} onClick={run}>
+          <Send /> {busy ? 'Enviando… (até 30 s)' : 'Enviar teste'}
+        </button>
+        <span className="small muted grow">Vai com um paciente fictício e <span className="mono">"teste": true</span>. Com o seu telefone, a mensagem chega para você.</span>
+      </div>
+      {result && (
+        <div className={`webhook-result ${result.recebido ? 'ok' : 'fail'}`}>
+          <div className="row" style={{ gap: 6 }}>
+            {result.recebido ? <CheckCircle2 /> : <XCircle />}
+            <b>
+              {result.recebido
+                ? `Webhook recebeu: resposta ${result.status_http} em ${secs(result.tempo_ms)}`
+                : result.incerto
+                  ? `${result.erro}. Em um disparo, esse paciente não seria reenviado (pode ter chegado).`
+                  : `Falhou: ${result.erro}${result.tempo_ms != null ? ` (${secs(result.tempo_ms)})` : ''}`}
+            </b>
+          </div>
+          {result.recebido && result.tempo_ms > 20000 && (
+            <div className="small">Demorou para responder. Acima de 30 s o disparo considera que falhou: ajuste o webhook para responder logo (e processar depois).</div>
+          )}
+          {result.resposta && <pre className="webhook-pre">{result.resposta}</pre>}
+          {result.enviado && (
+            <button type="button" className="link-btn small" onClick={() => setShowJson((v) => !v)}>{showJson ? 'esconder o JSON enviado' : 'ver o JSON enviado'}</button>
+          )}
+          {showJson && result.enviado && <pre className="webhook-pre">{JSON.stringify(result.enviado, null, 2)}</pre>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TestModal({ c, onClose }) {
+  return (
+    <Modal title={`Testar webhook · ${c.name}`} onClose={onClose}>
+      <div className="small muted" style={{ marginBottom: 10, overflowWrap: 'anywhere' }}>{c.webhook_url}</div>
+      <WebhookTester url={c.webhook_url} name={c.name} message={c.message} />
+    </Modal>
+  );
+}
+
 function CampaignEditor({ campaign, agendas, procedures, onClose, onSaved }) {
   const toast = useToast();
   const [form, setForm] = useState(() => ({
@@ -313,6 +380,9 @@ function CampaignEditor({ campaign, agendas, procedures, onClose, onSaved }) {
             <Field label="Mensagem ou instrução (vai no JSON, opcional)" full>
               <textarea className="textarea" rows={3} value={form.message} onChange={(e) => set('message')(e.target.value)} placeholder="ex.: Oferta de Botox com 20% até 30/11. Convidar para avaliação." />
             </Field>
+            <Field label="Testar o webhook antes de disparar" full>
+              <WebhookTester url={form.webhook_url} name={form.name} message={form.message} />
+            </Field>
           </div>
         </section>
         <section className="stack" style={{ gap: 10 }}>
@@ -385,6 +455,7 @@ function RecipientsModal({ campaign, onClose, onChanged }) {
 }
 
 function CampaignCard({ c, onEdit, onRecipients, onChanged }) {
+  const [testing, setTesting] = useState(false);
   const toast = useToast();
   const [label, tone] = STATUS[c.status];
   const total = Number(c.total);
@@ -439,9 +510,11 @@ function CampaignCard({ c, onEdit, onRecipients, onChanged }) {
         {c.status === 'enviando' && <button type="button" className="btn btn-sm" onClick={() => setStatus('pausada')}><Pause /> Pausar</button>}
         {c.status !== 'concluida' && c.status !== 'cancelada' && <button type="button" className="btn btn-sm" onClick={onEdit}><Pencil /> Editar</button>}
         <button type="button" className="btn btn-sm" onClick={onRecipients}><Users /> Ver envios</button>
+        {c.status !== 'cancelada' && <button type="button" className="btn btn-sm" onClick={() => setTesting(true)}><Send /> Testar webhook</button>}
         {['rascunho', 'enviando', 'pausada'].includes(c.status) && <button type="button" className="btn btn-sm btn-ghost" onClick={() => setStatus('cancelada')}><Ban /> Cancelar</button>}
         {['rascunho', 'concluida', 'cancelada'].includes(c.status) && <button type="button" className="btn btn-sm btn-ghost" style={{ color: 'var(--danger)' }} onClick={remove}><Trash2 /> Apagar</button>}
       </div>
+      {testing && <TestModal c={c} onClose={() => setTesting(false)} />}
     </div>
   );
 }

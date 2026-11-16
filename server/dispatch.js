@@ -6,6 +6,8 @@ import { patientContexts } from './patient-context.js';
 const BATCH = 50;
 const CONCURRENCY = 5;
 const WEBHOOK_TIMEOUT_MS = 10_000;
+// Campaign webhooks often run an assistant before answering (e.g. Chatflux).
+export const campaignTimeoutMs = () => Number(process.env.CAMPAIGN_WEBHOOK_TIMEOUT_MS) || 30_000;
 
 const isoDay = (value) => (value instanceof Date ? value.toISOString().slice(0, 10) : value);
 const TZ = 'America/Sao_Paulo';
@@ -19,19 +21,36 @@ async function settingUrl(key) {
 // POSTs JSON to the configured webhook. A receiver can check the
 // x-clinica-assinatura header (HMAC-SHA256 of the body) when
 // WEBHOOK_SIGNING_SECRET is set.
-async function postWebhook(url, payload) {
+// Returns { status, ms, body }. A webhook that doesn't answer in time may
+// still have received the message: that error carries `uncertain`.
+export async function postWebhook(url, payload, { timeoutMs = WEBHOOK_TIMEOUT_MS } = {}) {
   const body = JSON.stringify(payload);
   const headers = { 'content-type': 'application/json' };
   if (process.env.WEBHOOK_SIGNING_SECRET) {
     headers['x-clinica-assinatura'] = `sha256=${createHmac('sha256', process.env.WEBHOOK_SIGNING_SECRET).update(body).digest('hex')}`;
   }
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), WEBHOOK_TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const started = Date.now();
   try {
     const res = await fetch(url, { method: 'POST', headers, body, signal: controller.signal });
-    if (!res.ok) throw new Error(`webhook respondeu ${res.status}`);
+    const text = await res.text().catch(() => '');
+    const result = { status: res.status, ms: Date.now() - started, body: text.slice(0, 2000) };
+    if (!res.ok) throw Object.assign(new Error(`webhook respondeu ${res.status}`), result);
+    return result;
   } catch (error) {
-    throw new Error(error.name === 'AbortError' ? 'webhook não respondeu em 10s' : error.message);
+    if (error.name === 'AbortError') {
+      throw Object.assign(new Error(`webhook não respondeu em ${Math.round(timeoutMs / 1000)}s`), { uncertain: true, ms: Date.now() - started });
+    }
+    if (error.status) throw error;
+    const code = error.cause?.code ?? error.cause?.errors?.[0]?.code;
+    const reason = {
+      ENOTFOUND: 'endereço do webhook não encontrado (confira o domínio)',
+      ECONNREFUSED: 'nada respondendo nesse endereço',
+      ECONNRESET: 'o webhook fechou a conexão',
+      CERT_HAS_EXPIRED: 'certificado do webhook vencido',
+    }[code] ?? (code ? `falha de conexão (${code})` : error.message === 'fetch failed' ? 'não foi possível conectar ao webhook' : error.message);
+    throw Object.assign(new Error(reason), { ms: Date.now() - started });
   } finally {
     clearTimeout(timer);
   }
@@ -243,6 +262,7 @@ export async function dispatchCampaigns({ deadline = Date.now() + 50_000 } = {})
         if (!ctx) throw new Error('paciente não encontrado');
         await postWebhook(row.webhook_url, {
           tipo: 'campanha',
+          teste: false,
           campanha: { id: row.campaign_id, nome: row.campaign_name, mensagem: row.campaign_message ?? null },
           envio_id: row.recipient_id,
           tentativa: row.attempts,
@@ -251,11 +271,16 @@ export async function dispatchCampaigns({ deadline = Date.now() + 50_000 } = {})
           retornos_pendentes: ctx.retornos_pendentes,
           historico: ctx.historico,
           resumo: ctx.resumo,
-        });
+        }, { timeoutMs: campaignTimeoutMs() });
         await query(`select mark_campaign_sent($1)`, [row.recipient_id]);
         result.enviados++;
       } catch (error) {
-        await query(`select mark_campaign_failed($1, $2)`, [row.recipient_id, error.message]);
+        // No answer in time: it may have been received, and sending again
+        // could message the patient twice. Left as an error to check.
+        const message = error.uncertain
+          ? `${error.message}; pode ter chegado, não foi reenviado para não duplicar`
+          : error.message;
+        await query(`select mark_campaign_failed($1, $2, $3)`, [row.recipient_id, message, Boolean(error.uncertain)]);
         result.falhas++;
       }
     });

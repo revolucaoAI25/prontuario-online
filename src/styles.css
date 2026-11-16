@@ -775,3 +775,11 @@ body.focus-mode .record-head .avatar.lg { width: 40px; height: 40px; font-size: 
 .chip.muted { opacity: 0.55; text-decoration: line-through; }
 @media (max-width: 700px) { .campaign-grid { grid-template-columns: minmax(0, 1fr); } }
 .page-loading { flex: 1; display: grid; place-items: center; color: var(--ink-mute); font-size: 13px; }
+
+/* Disparos: webhook test */
+.webhook-test { display: flex; flex-direction: column; gap: 8px; }
+.webhook-result { padding: 10px 12px; border-radius: 10px; font-size: 13px; display: flex; flex-direction: column; gap: 6px; }
+.webhook-result svg { width: 16px; height: 16px; flex: none; }
+.webhook-result.ok { background: var(--brand-softer); color: var(--brand-strong); border: 1px solid #cfe3e0; }
+.webhook-result.fail { background: var(--danger-bg); color: var(--danger); border: 1px solid #eccac5; }
+.webhook-pre { margin: 0; max-height: 220px; overflow: auto; background: var(--surface); color: var(--ink-2); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; font: 11.5px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }

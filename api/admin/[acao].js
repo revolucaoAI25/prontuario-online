@@ -1,6 +1,7 @@
 import { apiRouter, ApiError } from '../../server/http.js';
 import { staffFromRequest } from '../../server/supabase-admin.js';
 import { listUsers, createUser, updateUser, resetPassword } from '../../server/admin.js';
+import { testCampaignWebhook } from '../../server/campaign-test.js';
 
 // POST /api/admin/<acao>, called by the app with the logged-in admin's token.
 export default apiRouter(
@@ -9,6 +10,7 @@ export default apiRouter(
     criar_usuario: createUser,
     atualizar_usuario: updateUser,
     redefinir_senha: resetPassword,
+    testar_webhook_campanha: testCampaignWebhook,
   },
   {
     authorize: async (req) => {

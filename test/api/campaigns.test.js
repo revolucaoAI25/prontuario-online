@@ -7,6 +7,7 @@ import {
 
 process.env.DATABASE_URL = TEST_DATABASE_URL;
 process.env.CRON_SECRET = 'segredo-cron';
+process.env.CAMPAIGN_WEBHOOK_TIMEOUT_MS = '400';
 
 const { createDevServer } = await import('../../server/dev-server.js');
 const { closePool } = await import('../../server/db.js');
@@ -18,6 +19,7 @@ let receiver;
 let hookUrl;
 let received = [];
 let failNext = 0;
+let slowNext = 0;
 let superadmin;
 let admin;
 let estetica;
@@ -32,8 +34,11 @@ before(async () => {
     req.on('data', (c) => chunks.push(c));
     req.on('end', () => {
       received.push(JSON.parse(Buffer.concat(chunks).toString()));
-      res.statusCode = failNext-- > 0 ? 500 : 200;
-      res.end();
+      const slow = slowNext-- > 0;
+      setTimeout(() => {
+        res.statusCode = failNext-- > 0 ? 500 : 200;
+        res.end(res.statusCode === 200 ? '{"recebido":true}' : 'erro');
+      }, slow ? 900 : 0);
     });
   }).listen(0);
   hookUrl = `http://localhost:${receiver.address().port}/campanha`;
@@ -53,6 +58,7 @@ after(async () => {
 beforeEach(() => {
   received = [];
   failNext = 0;
+  slowNext = 0;
 });
 
 const run = () => fetch(`${base}/cron/campanhas`, { method: 'POST', headers: { authorization: 'Bearer segredo-cron' } })
@@ -235,4 +241,53 @@ test('the database job calls the server only when a message is due', async () =>
   assert.equal((await one(db, `select ping_campaign_dispatch() as r`)).r, 'chamado');
   assert.equal((await one(db, `select url from net.calls`)).url, 'https://clinica.example.com/api/cron/campanhas');
   await db.query(`update settings set value = 'null' where key = 'app_url'`);
+});
+
+test('a webhook that does not answer in time is not sent again (it may have arrived)', async () => {
+  const c = await newCampaign({ name: 'Lenta', batch: 10 });
+  await createPatient(db, { name: 'Rita Lenta', phone: '(31) 98000-0401' });
+  await fill(c.id, { busca: 'Lenta' });
+  await db.query(`update campaigns set status = 'cancelada' where id <> $1 and status = 'enviando'`, [c.id]);
+  await start(c.id);
+  slowNext = 1;
+  assert.equal((await run()).body.campanhas.falhas, 1);
+  const r = await one(db, `select * from campaign_recipients where campaign_id = $1`, [c.id]);
+  assert.equal(r.status, 'erro', 'no retry: the patient could get it twice');
+  assert.match(r.last_error, /não respondeu em/);
+  assert.match(r.last_error, /não foi reenviado/);
+  assert.equal(received.length, 1);
+  assert.equal(received[0].teste, false);
+});
+
+test('"Enviar teste": the webhook gets a made-up patient with teste: true; only the super admin can', async () => {
+  const { testCampaignWebhook } = await import('../../server/campaign-test.js');
+  const staff = (id) => one(db, `select * from staff where id = $1`, [id]);
+  await assert.rejects(testCampaignWebhook({ url: hookUrl }, null, await staff(admin)), /super admin/);
+  await assert.rejects(testCampaignWebhook({ url: 'ftp://x' }, null, await staff(superadmin)), /https/);
+
+  const ok = await testCampaignWebhook({ url: hookUrl, nome: 'Black Friday', mensagem: 'Oferta', telefone: '(31) 99999-1234' }, null, await staff(superadmin));
+  assert.equal(ok.recebido, true);
+  assert.equal(ok.status_http, 200);
+  assert.equal(ok.resposta, '{"recebido":true}');
+  const sent = received.at(-1);
+  assert.equal(sent.teste, true);
+  assert.equal(sent.tipo, 'campanha');
+  assert.deepEqual(sent.campanha, { id: '00000000-0000-0000-0000-000000000000', nome: 'Black Friday', mensagem: 'Oferta' });
+  assert.equal(sent.paciente.whatsapp, '5531999991234', 'your phone, to see it arrive');
+  // same keys as a real send
+  assert.deepEqual(Object.keys(sent).sort(), ['agendamentos_futuros', 'campanha', 'envio_id', 'historico', 'paciente', 'resumo', 'retornos_pendentes', 'tentativa', 'teste', 'tipo']);
+
+  const fictitious = await testCampaignWebhook({ url: hookUrl }, null, await staff(superadmin));
+  assert.equal(fictitious.enviado.paciente.whatsapp, '5531900000000');
+
+  failNext = 1;
+  const failed = await testCampaignWebhook({ url: hookUrl }, null, await staff(superadmin));
+  assert.deepEqual([failed.recebido, failed.status_http, failed.resposta], [false, 500, 'erro']);
+  slowNext = 1;
+  const slow = await testCampaignWebhook({ url: hookUrl }, null, await staff(superadmin));
+  assert.equal(slow.recebido, false);
+  assert.equal(slow.incerto, true);
+  const down = await testCampaignWebhook({ url: 'http://localhost:1/nada' }, null, await staff(superadmin));
+  assert.equal(down.recebido, false);
+  assert.match(down.erro, /nada respondendo|não foi possível conectar/);
 });
