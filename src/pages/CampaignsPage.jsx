@@ -3,7 +3,7 @@ import { Ban, Megaphone, Pause, Pencil, Play, Plus, Search, Trash2, Users, X } f
 import { supabase, must } from '../lib/supabase.js';
 import { useInterval, useLoad } from '../lib/hooks.js';
 import { useToast } from '../context/ToastContext.jsx';
-import { formatDay, formatDateTime } from '../lib/time.js';
+import { formatDay, formatDateTime, localDay } from '../lib/time.js';
 import { Empty, Field, Modal } from '../components/ui.jsx';
 import { PatientPicker } from '../components/PatientPicker.jsx';
 
@@ -99,7 +99,8 @@ function AudienceFields({ audience, setAudience, agendas, procedures, cadence })
     setAudience({ ...audience, incluir: [...incluir, p.id] });
   };
   const chosen = incluir.map((id) => picked.find((p) => p.id === id)).filter(Boolean);
-  const lastVisit = filtros.veio_nos_ultimos_meses != null ? 'veio' : filtros.sem_vir_ha_meses != null ? 'sumiu' : '';
+  const lastVisit = filtros.veio_nos_ultimos_meses != null ? 'veio' : filtros.sem_vir_ha_meses != null ? 'sumiu'
+    : filtros.ultima_visita_de != null || filtros.ultima_visita_ate != null ? 'periodo' : '';
   const months = filtros.veio_nos_ultimos_meses ?? filtros.sem_vir_ha_meses ?? 12;
 
   return (
@@ -139,17 +140,30 @@ function AudienceFields({ audience, setAudience, agendas, procedures, cadence })
             <Field label="Última visita">
               <div className="row" style={{ gap: 6 }}>
                 <select className="select" value={lastVisit} onChange={(e) => {
-                  const f = { ...filtros, veio_nos_ultimos_meses: undefined, sem_vir_ha_meses: undefined };
+                  const f = { ...filtros, veio_nos_ultimos_meses: undefined, sem_vir_ha_meses: undefined, ultima_visita_de: undefined, ultima_visita_ate: undefined };
                   if (e.target.value === 'veio') f.veio_nos_ultimos_meses = months;
                   if (e.target.value === 'sumiu') f.sem_vir_ha_meses = months;
+                  if (e.target.value === 'periodo') { f.ultima_visita_de = localDay(new Date(Date.now() - 90 * 86400000)); f.ultima_visita_ate = localDay(); }
                   setPage(0); setAudience({ ...audience, filtros: f });
                 }}>
                   <option value="">Qualquer</option>
                   <option value="veio">Veio nos últimos</option>
                   <option value="sumiu">Não vem há mais de</option>
+                  <option value="periodo">Entre datas</option>
                 </select>
-                {lastVisit && <><input className="input" style={{ width: 70 }} type="number" min="1" max="240" value={months} onChange={(e) => setFilter(lastVisit === 'veio' ? 'veio_nos_ultimos_meses' : 'sem_vir_ha_meses', Number(e.target.value) || 1)} /> <span className="small">meses</span></>}
+                {(lastVisit === 'veio' || lastVisit === 'sumiu') && <><input className="input" style={{ width: 70 }} type="number" min="1" max="240" value={months} onChange={(e) => setFilter(lastVisit === 'veio' ? 'veio_nos_ultimos_meses' : 'sem_vir_ha_meses', Number(e.target.value) || 1)} /> <span className="small">meses</span></>}
               </div>
+              {lastVisit === 'periodo' && (
+                <div className="row-wrap" style={{ gap: 6, marginTop: 6 }}>
+                  <span className="small">de</span>
+                  <input className="input" type="date" style={{ width: 150 }} aria-label="Última visita a partir de" value={filtros.ultima_visita_de ?? ''}
+                    max={filtros.ultima_visita_ate || localDay()} onChange={(e) => setFilter('ultima_visita_de', e.target.value || undefined)} />
+                  <span className="small">até</span>
+                  <input className="input" type="date" style={{ width: 150 }} aria-label="Última visita até" value={filtros.ultima_visita_ate ?? ''}
+                    min={filtros.ultima_visita_de || undefined} max={localDay()} onChange={(e) => setFilter('ultima_visita_ate', e.target.value || undefined)} />
+                  {filtros.ultima_visita_ate !== localDay() && <button type="button" className="btn btn-sm btn-ghost" onClick={() => setFilter('ultima_visita_ate', localDay())}>até hoje</button>}
+                </div>
+              )}
             </Field>
             <Field label="Aniversário no mês">
               <select className="select" value={filtros.aniversario_mes ?? ''} onChange={(e) => setFilter('aniversario_mes', e.target.value ? Number(e.target.value) : undefined)}>

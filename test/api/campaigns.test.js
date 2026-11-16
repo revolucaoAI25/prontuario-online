@@ -95,6 +95,13 @@ test('the audience: filters, and never anyone who opted out or has no phone', as
   assert.deepEqual(await names({}), ['Ana Campanha', 'Bia Campanha']);
   assert.deepEqual(await names({ sem_vir_ha_meses: 12 }), ['Bia Campanha']);
   assert.deepEqual(await names({ veio_nos_ultimos_meses: 6 }), ['Ana Campanha']);
+  // last visit between two dates on the calendar (both ends included)
+  const day = async (monthsAgo) => (await one(db, `select (clinic_today() - make_interval(months => $1))::date::text as d`, [monthsAgo])).d;
+  assert.deepEqual(await names({ ultima_visita_de: await day(16), ultima_visita_ate: await day(10) }), ['Bia Campanha']);
+  assert.deepEqual(await names({ ultima_visita_de: await day(3) }), ['Ana Campanha'], 'from a date until today');
+  assert.deepEqual(await names({ ultima_visita_ate: await day(3) }), ['Bia Campanha'], 'up to a date');
+  assert.deepEqual(await names({ ultima_visita_de: await day(2), ultima_visita_ate: await day(2) }), ['Ana Campanha'], 'a single day');
+  assert.deepEqual(await names({ ultima_visita_de: await day(9), ultima_visita_ate: await day(5) }), []);
   assert.deepEqual(await names({ agendas: [estetica], busca: 'bia' }), ['Bia Campanha']);
   assert.deepEqual(await names({ agendas: [await agendaId(db, 'Simone Rezeck')] }), []);
   // the clinic admin sees no audience at all
