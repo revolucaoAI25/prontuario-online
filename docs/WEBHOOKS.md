@@ -14,176 +14,95 @@ a mensagem. O webhook de **falta** (paciente que não chegou) sai ao longo do di
   um agendamento futuro (agendado/confirmado) — esses esperam para ver se o paciente refaz o
   procedimento. Lembretes atrasados mais que a tolerância (padrão 30 dias) também não.
 
+Todos os webhooks mandam **um nível só**, com texto ou número em cada campo (fácil de usar como
+variável no Chatflux/n8n). Datas em dd/mm/aaaa; o que não existe vem como texto vazio. Todos trazem
+`"teste": false` (o botão **Enviar teste**, ao lado de cada webhook em Ajustes → Integrações, manda o
+mesmo JSON com um paciente fictício e `"teste": true`) e os campos do paciente:
+
+| Campo | O que é |
+|---|---|
+| `nome`, `primeiro_nome` | nome do paciente |
+| `telefone` | WhatsApp no formato 55 + DDD + número |
+| `idade`, `data_nascimento` | idade e nascimento (dd/mm/aaaa) |
+| `ultima_visita`, `dias_desde_ultima_visita` | último atendimento em que chegou, e há quantos dias |
+| `ultima_visita_agenda`, `ultima_visita_procedimentos` | onde foi e o que fez nessa visita |
+| `total_visitas` | quantos atendimentos já teve |
+| `procedimentos_realizados` | o que já fez e quantas vezes, ex.: `Botox (2x), Limpeza de pele (1x)` |
+| `retornos_pendentes` | os 3 retornos previstos mais próximos |
+| `proximo_agendamento` | o próximo horário marcado (`dd/mm/aaaa às hh:mm · Agenda`) ou vazio |
+| `resumo` | tudo isso em poucas frases, pronto para a IA |
+| `paciente_id` | id do paciente no sistema |
+
 ## Lembrete de retorno
 
 | Campo | O que é |
 |---|---|
-| `paciente` | dados de contato: nome, primeiro nome, telefones, `whatsapp` (com 55), e-mail, nascimento, idade |
-| `procedimento` | o procedimento do retorno e o prazo dele em meses |
-| `data_ultima_vez` | quando o paciente fez esse procedimento pela última vez |
-| `dias_desde_ultima_vez` | quantos dias se passaram desde então |
+| `tipo` | `"lembrete_retorno"` |
+| `procedimento`, `retorno_em_meses` | o procedimento do retorno e o prazo dele |
+| `data_ultima_vez`, `dias_desde_ultima_vez` | quando fez esse procedimento pela última vez |
 | `vezes_que_fez` | quantas vezes já fez esse procedimento na clínica |
-| `data_retorno_prevista` | a data prevista para voltar (última vez + prazo, ou a data ajustada à mão) |
-| `atendimento_de_origem` | o atendimento em que fez o procedimento: agenda, tipo, data, horário, todos os procedimentos daquele dia |
+| `data_retorno_prevista` | quando deveria voltar (última vez + prazo, ou a data ajustada à mão) |
 | `criado_manualmente`, `observacao` | se a equipe criou o lembrete à mão, e a observação dele |
-| `outros_retornos_pendentes` | outros retornos previstos do mesmo paciente |
-| `agendamentos_futuros` | o que já está marcado (em geral vazio, já que quem tem horário marcado não recebe o lembrete; pode trazer um agendamento com status "pediu para remarcar") |
-| `historico` | o mesmo resumo da API `/pacientes/contexto`: total de atendimentos, último atendimento, faltas, procedimentos já feitos, agendas, últimos agendamentos |
-| `resumo` | o histórico em uma frase, pronto para a IA |
-| `tentativa` | 1 na primeira vez; aumenta a cada reenvio |
+| `lembrete_id`, `tentativa` | id do lembrete; 1 na primeira vez, aumenta a cada reenvio |
 
-Exemplo completo:
 ```json
 {
   "tipo": "lembrete_retorno",
+  "teste": false,
   "lembrete_id": "…",
   "tentativa": 1,
-  "paciente": {
-    "id": "…",
-    "nome": "Maria Souza",
-    "primeiro_nome": "Maria",
-    "telefone": "(31) 99999-0000",
-    "telefone_2": null,
-    "whatsapp": "5531999990000",
-    "email": "maria@exemplo.com",
-    "data_nascimento": "1985-11-02",
-    "idade": 40,
-    "aceita_mensagens": true
-  },
-  "procedimento": {
-    "id": "…",
-    "nome": "Botox",
-    "retorno_em_meses": 4
-  },
-  "data_ultima_vez": "2026-06-27",
-  "dias_desde_ultima_vez": 122,
-  "vezes_que_fez": 1,
-  "data_retorno_prevista": "2026-10-27",
-  "atendimento_de_origem": {
-    "id": "…",
-    "agenda": {
-      "id": "…",
-      "nome": "Dr. Everson Rezeck"
-    },
-    "tipo": {
-      "id": "…",
-      "nome": "Consulta"
-    },
-    "data": "2026-06-27",
-    "inicio": "15:20",
-    "fim": "16:00",
-    "duracao_minutos": 40,
-    "status": "chegou",
-    "status_descricao": "Paciente chegou",
-    "procedimentos": [
-      "Botox",
-      "Preenchimento com ácido hialurônico"
-    ],
-    "observacao": null,
-    "motivo_cancelamento": null
-  },
+  "procedimento": "Limpeza de pele",
+  "retorno_em_meses": 2,
+  "data_ultima_vez": "27/10/2026",
+  "dias_desde_ultima_vez": 21,
+  "vezes_que_fez": 3,
+  "data_retorno_prevista": "27/12/2026",
+  "observacao": "",
   "criado_manualmente": false,
-  "observacao": null,
-  "outros_retornos_pendentes": [
-    {
-      "procedimento": "Preenchimento com ácido hialurônico",
-      "ultima_vez": "2026-06-27",
-      "previsto_para": "2027-06-27"
-    }
-  ],
-  "agendamentos_futuros": [],
-  "historico": {
-    "total_atendimentos": 1,
-    "primeiro_atendimento": "2026-06-27",
-    "ultimo_atendimento": {
-      "id": "…",
-      "agenda": {
-        "id": "…",
-        "nome": "Dr. Everson Rezeck"
-      },
-      "tipo": {
-        "id": "…",
-        "nome": "Consulta"
-      },
-      "data": "2026-06-27",
-      "inicio": "15:20",
-      "fim": "16:00",
-      "duracao_minutos": 40,
-      "status": "chegou",
-      "status_descricao": "Paciente chegou",
-      "procedimentos": [
-        "Botox",
-        "Preenchimento com ácido hialurônico"
-      ],
-      "observacao": null,
-      "motivo_cancelamento": null
-    },
-    "faltas": 0,
-    "cancelamentos": 0,
-    "procedimentos_realizados": [
-      {
-        "nome": "Botox",
-        "vezes": 1,
-        "ultima_vez": "2026-06-27"
-      },
-      {
-        "nome": "Preenchimento com ácido hialurônico",
-        "vezes": 1,
-        "ultima_vez": "2026-06-27"
-      }
-    ],
-    "agendas": [
-      {
-        "nome": "Dr. Everson Rezeck",
-        "atendimentos": 1
-      }
-    ],
-    "ultimos_agendamentos": [
-      {
-        "id": "…",
-        "agenda": {
-          "id": "…",
-          "nome": "Dr. Everson Rezeck"
-        },
-        "tipo": {
-          "id": "…",
-          "nome": "Consulta"
-        },
-        "data": "2026-06-27",
-        "inicio": "15:20",
-        "fim": "16:00",
-        "duracao_minutos": 40,
-        "status": "chegou",
-        "status_descricao": "Paciente chegou",
-        "procedimentos": [
-          "Botox",
-          "Preenchimento com ácido hialurônico"
-        ],
-        "observacao": null,
-        "motivo_cancelamento": null
-      }
-    ],
-    "prontuario": {
-      "anotacoes": 0,
-      "ultima_anotacao": null
-    }
-  },
-  "resumo": "Maria Souza, 40 anos. Paciente desde 2026, 1 atendimento(s); último em 27/06/2026 na agenda Dr. Everson Rezeck (Botox, Preenchimento com ácido hialurônico). Procedimentos já feitos: Botox (1x, última em 27/06/2026); Preenchimento com ácido hialurônico (1x, última em 27/06/2026). Sem agendamentos futuros. Retornos previstos: Botox em 27/10/2026; Preenchimento com ácido hialurônico em 27/06/2027."
+  "nome": "Vanessa Pereira Fonseca",
+  "primeiro_nome": "Vanessa",
+  "telefone": "5531992783288",
+  "idade": 48,
+  "data_nascimento": "18/11/1977",
+  "ultima_visita": "27/10/2026",
+  "dias_desde_ultima_visita": 21,
+  "ultima_visita_agenda": "Estética",
+  "ultima_visita_procedimentos": "Limpeza de pele",
+  "total_visitas": 10,
+  "procedimentos_realizados": "Limpeza de pele (3x), Depilação a laser (2x), Botox (1x)",
+  "retornos_pendentes": "Depilação a laser (previsto para 22/12/2026), Limpeza de pele (previsto para 27/12/2026)",
+  "proximo_agendamento": "",
+  "resumo": "Vanessa Pereira Fonseca, 48 anos. 10 visita(s); a última em 27/10/2026 (Estética: Limpeza de pele). Já fez: Limpeza de pele (3x), Depilação a laser …",
+  "paciente_id": "…"
 }
 ```
 
 ## Aniversário
+
+No dia do aniversário. `idade` é a idade que o paciente completa; `mensagem_id` e `tentativa`
+identificam o envio.
+
 ```json
 {
   "tipo": "aniversario",
+  "teste": false,
   "mensagem_id": "…",
-  "paciente": { "id": "…", "nome": "Maria Souza", "primeiro_nome": "Maria", "telefone": "(31) 99999-0000",
-                "telefone_2": null, "whatsapp": "5531999990000", "email": "maria@exemplo.com",
-                "data_nascimento": "1985-11-02", "idade": 41, "aceita_mensagens": true },
-  "data_nascimento": "1985-11-02",
-  "idade": 41,
-  "agendamentos_futuros": [],
-  "tentativa": 1
+  "tentativa": 1,
+  "nome": "Vanessa Pereira Fonseca",
+  "primeiro_nome": "Vanessa",
+  "telefone": "5531992783288",
+  "idade": 49,
+  "data_nascimento": "18/11/1977",
+  "ultima_visita": "27/10/2026",
+  "dias_desde_ultima_visita": 21,
+  "ultima_visita_agenda": "Estética",
+  "ultima_visita_procedimentos": "Limpeza de pele",
+  "total_visitas": 10,
+  "procedimentos_realizados": "Limpeza de pele (3x), Depilação a laser (2x), Botox (1x)",
+  "retornos_pendentes": "Depilação a laser (previsto para 22/12/2026), Limpeza de pele (previsto para 27/12/2026)",
+  "proximo_agendamento": "",
+  "resumo": "Vanessa Pereira Fonseca, 48 anos. 10 visita(s); a última em 27/10/2026 (Estética: Limpeza de pele). Já fez: Limpeza de pele (3x), Depilação a laser …",
+  "paciente_id": "…"
 }
 ```
 
@@ -217,45 +136,47 @@ Falhas: nova tentativa em 10, 20, 40 e 80 minutos (5 no total) — a mesma regra
 
 | Campo | O que é |
 |---|---|
-| `tipo` | sempre `"falta"` |
-| `alerta_id` | id do aviso (único por agendamento e horário) |
-| `tentativa` | 1 na primeira vez; maior se o webhook falhou antes |
-| `paciente` | mesmos dados de contato dos outros webhooks (`whatsapp` com 55, `primeiro_nome`…) |
-| `agendamento` | o agendamento perdido, no formato da API: agenda, tipo, `data`, `inicio`, `fim`, `status` (`agendado`, `confirmado`, `pediu_remarcar` ou `nao_compareceu`), `status_descricao`, procedimentos, observação |
+| `tipo` | `"falta"` |
+| `agendamento_data`, `agendamento_horario` | o horário perdido |
+| `agendamento_agenda`, `agendamento_tipo`, `agendamento_procedimentos` | onde, o quê |
+| `agendamento_status` | a situação, por extenso (ex.: "Confirmado pelo paciente") |
 | `minutos_desde_o_horario` | quanto tempo já passou do horário marcado |
-| `agendamentos_futuros` | sempre vazio (quem já tem horário futuro não recebe aviso); mantido pelo formato |
-| `retornos_pendentes` | retornos previstos do paciente (`procedimento`, `ultima_vez`, `previsto_para`) |
-| `historico` | o mesmo de `pacientes/contexto`: total de atendimentos, último, faltas, procedimentos, prontuário |
-| `resumo` | um parágrafo pronto para a IA ler |
+| `alerta_id`, `tentativa`, `agendamento_id` | ids do aviso e do agendamento; 1 na primeira vez |
 
 ```json
 {
   "tipo": "falta",
-  "alerta_id": "14ca7c02-e771-4232-9446-8f3574bf10f3",
+  "teste": false,
+  "alerta_id": "…",
   "tentativa": 1,
-  "paciente": { "id": "…", "nome": "Beatriz Moura Andrade", "primeiro_nome": "Beatriz",
-                "telefone": "(31) 99121-4455", "telefone_2": null, "whatsapp": "5531991214455",
-                "email": null, "data_nascimento": "1988-03-14", "idade": 38, "aceita_mensagens": true },
-  "agendamento": {
-    "id": "74072d13-e078-444b-9a2c-f7995dc432fe",
-    "agenda": { "id": "…", "nome": "Estética" },
-    "tipo": { "id": "…", "nome": "Consulta" },
-    "data": "2026-11-04", "inicio": "18:30", "fim": "19:00", "duracao_minutos": 30,
-    "status": "confirmado", "status_descricao": "Confirmado pelo paciente",
-    "procedimentos": [], "observacao": null, "motivo_cancelamento": null
-  },
-  "minutos_desde_o_horario": 184,
-  "agendamentos_futuros": [],
-  "retornos_pendentes": [
-    { "procedimento": "Limpeza de pele", "ultima_vez": "2025-09-04", "previsto_para": "2025-11-04" }
-  ],
-  "historico": { "total_atendimentos": 1, "primeiro_atendimento": "2025-09-04", "faltas": 0, "…": "…" },
-  "resumo": "Beatriz Moura Andrade, 38 anos. Paciente desde 2025, 1 atendimento(s); último em 04/09/2025 na agenda Estética (Limpeza de pele). Procedimentos já feitos: Limpeza de pele (1x, última em 04/09/2025). Sem agendamentos futuros. Retornos previstos: Limpeza de pele em 04/11/2025."
+  "agendamento_data": "17/11/2026",
+  "agendamento_horario": "14:00",
+  "agendamento_agenda": "Estética",
+  "agendamento_tipo": "Consulta",
+  "agendamento_procedimentos": "Limpeza de pele",
+  "agendamento_status": "Confirmado pelo paciente",
+  "minutos_desde_o_horario": 124,
+  "nome": "Vanessa Pereira Fonseca",
+  "primeiro_nome": "Vanessa",
+  "telefone": "5531992783288",
+  "idade": 48,
+  "data_nascimento": "18/11/1977",
+  "ultima_visita": "27/10/2026",
+  "dias_desde_ultima_visita": 21,
+  "ultima_visita_agenda": "Estética",
+  "ultima_visita_procedimentos": "Limpeza de pele",
+  "total_visitas": 10,
+  "procedimentos_realizados": "Limpeza de pele (3x), Depilação a laser (2x), Botox (1x)",
+  "retornos_pendentes": "Depilação a laser (previsto para 22/12/2026), Limpeza de pele (previsto para 27/12/2026)",
+  "proximo_agendamento": "",
+  "resumo": "Vanessa Pereira Fonseca, 48 anos. 10 visita(s); a última em 27/10/2026 (Estética: Limpeza de pele). Já fez: Limpeza de pele (3x), Depilação a laser …",
+  "paciente_id": "…",
+  "agendamento_id": "…"
 }
 ```
 
 Para remarcar a partir daqui, o fluxo usa a API normal: `agenda/disponibilidade` e
-`agenda/remarcar` com `agendamento_id` = `agendamento.id` (ou `agenda/agendar` para um novo).
+`agenda/remarcar` com o `agendamento_id` recebido (ou `agenda/agendar` para um novo).
 
 ## Campanhas (Disparos)
 

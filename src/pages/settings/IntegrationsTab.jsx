@@ -3,6 +3,7 @@ import { supabase, must } from '../../lib/supabase.js';
 import { useLoad } from '../../lib/hooks.js';
 import { useToast } from '../../context/ToastContext.jsx';
 import { Field } from '../../components/ui.jsx';
+import { WebhookTester } from '../../components/WebhookTester.jsx';
 
 function useSettings(keys) {
   const toast = useToast();
@@ -80,18 +81,21 @@ export function IntegrationsTab() {
 
   return (
     <div className="stack">
-      <div className="small muted">Visível só para o super admin (suporte técnico).</div>
+      <div className="small muted">Visível só para o super admin (suporte técnico). "Enviar teste" manda o mesmo JSON de um envio de verdade, com um paciente fictício e <code>"teste": true</code>; com o seu WhatsApp no campo, a mensagem chega para você. Dá para testar antes de salvar.</div>
       <div className="card card-pad">
         <div className="section-title">Webhooks</div>
         <div className="form-grid">
           <Field label="Webhook dos lembretes" full hint="Recebe um POST por lembrete devido (uma vez por dia). Formato em docs/WEBHOOKS.md.">
             <input className="input" value={form.reminder_webhook_url} onChange={set('reminder_webhook_url')} placeholder="https://..." />
+            {/^https?:\/\//.test(form.reminder_webhook_url ?? '') && <div style={{ marginTop: 8 }}><WebhookTester url={form.reminder_webhook_url} tipo="lembrete" compact /></div>}
           </Field>
           <Field label="Webhook de aniversário" full hint="Recebe um POST por aniversariante, no dia.">
             <input className="input" value={form.birthday_webhook_url} onChange={set('birthday_webhook_url')} placeholder="https://..." />
+            {/^https?:\/\//.test(form.birthday_webhook_url ?? '') && <div style={{ marginTop: 8 }}><WebhookTester url={form.birthday_webhook_url} tipo="aniversario" compact /></div>}
           </Field>
           <Field label="Webhook de falta" hint="Recebe um POST quando o paciente não foi marcado como “Chegou” depois do tempo ao lado. Uma vez por agendamento.">
             <input className="input" value={form.no_show_webhook_url} onChange={set('no_show_webhook_url')} placeholder="https://..." />
+            {/^https?:\/\//.test(form.no_show_webhook_url ?? '') && <div style={{ marginTop: 8 }}><WebhookTester url={form.no_show_webhook_url} tipo="falta" compact /></div>}
           </Field>
           <Field label="Avisar a falta depois de (horas)" hint="Contado a partir do horário marcado. Padrão: 2 horas.">
             <input className="input" inputMode="decimal" value={hours} onChange={set('no_show_hours')} />

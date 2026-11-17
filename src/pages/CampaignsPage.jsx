@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Ban, CheckCircle2, Megaphone, Pause, Pencil, Play, Plus, Search, Send, Trash2, Users, X, XCircle } from 'lucide-react';
-import { supabase, must, callApi } from '../lib/supabase.js';
+import { Ban, Megaphone, Pause, Pencil, Play, Plus, Search, Send, Trash2, Users, X } from 'lucide-react';
+import { supabase, must } from '../lib/supabase.js';
 import { useInterval, useLoad } from '../lib/hooks.js';
 import { useToast } from '../context/ToastContext.jsx';
 import { formatDay, formatDateTime, localDay } from '../lib/time.js';
 import { Empty, Field, Modal } from '../components/ui.jsx';
+import { WebhookTester } from '../components/WebhookTester.jsx';
 import { PatientPicker } from '../components/PatientPicker.jsx';
 
 const WEEKDAYS = [[1, 'Seg'], [2, 'Ter'], [3, 'Qua'], [4, 'Qui'], [5, 'Sex'], [6, 'Sáb'], [0, 'Dom']];
@@ -234,64 +235,6 @@ const DEFAULTS = {
   name: '', webhook_url: '', message: '', batch_size: 20, window_minutes: 60, gap_min_seconds: 30, gap_max_seconds: 60,
   hour_start: '08:00', hour_end: '20:00', weekdays: [1, 2, 3, 4, 5, 6],
 };
-
-// "Enviar teste": the webhook gets the same JSON as a real send, with a
-// made-up patient and "teste": true; optionally your phone, to see the
-// message arrive. Shows what came back and what was sent.
-function WebhookTester({ url, name, message }) {
-  const [phone, setPhone] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [result, setResult] = useState(null);
-  const [showJson, setShowJson] = useState(false);
-
-  async function run() {
-    setBusy(true);
-    setResult(null);
-    try {
-      setResult(await callApi('admin/testar_webhook_campanha', { url: url.trim(), nome: name, mensagem: message, telefone: phone.trim() || undefined }));
-    } catch (error) {
-      setResult({ recebido: false, erro: error.message });
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  const secs = (ms) => `${(ms / 1000).toFixed(1).replace('.', ',')} s`;
-  return (
-    <div className="webhook-test">
-      <div className="row-wrap" style={{ gap: 8 }}>
-        <input className="input" style={{ width: 230 }} value={phone} onChange={(e) => setPhone(e.target.value)} inputMode="tel"
-          placeholder="Seu WhatsApp (opcional)" aria-label="Telefone para o teste" />
-        <button type="button" className="btn btn-sm" disabled={busy || !/^https?:\/\//.test(url.trim())} onClick={run}>
-          <Send /> {busy ? 'Enviando… (até 30 s)' : 'Enviar teste'}
-        </button>
-        <span className="small muted grow">Vai com um paciente fictício e <span className="mono">"teste": true</span>. Com o seu telefone, a mensagem chega para você.</span>
-      </div>
-      {result && (
-        <div className={`webhook-result ${result.recebido ? 'ok' : 'fail'}`}>
-          <div className="row" style={{ gap: 6 }}>
-            {result.recebido ? <CheckCircle2 /> : <XCircle />}
-            <b>
-              {result.recebido
-                ? `Webhook recebeu: resposta ${result.status_http} em ${secs(result.tempo_ms)}`
-                : result.incerto
-                  ? `${result.erro}. Confira se chegou: em um disparo, isso conta como enviado sem confirmação (não reenvia).`
-                  : `Falhou: ${result.erro}${result.tempo_ms != null ? ` (${secs(result.tempo_ms)})` : ''}`}
-            </b>
-          </div>
-          {result.recebido && result.tempo_ms > 20000 && (
-            <div className="small">Demorou para responder. Acima de 30 s o disparo conta como enviado sem confirmação (e não reenvia).</div>
-          )}
-          {result.resposta && <pre className="webhook-pre">{result.resposta}</pre>}
-          {result.enviado && (
-            <button type="button" className="link-btn small" onClick={() => setShowJson((v) => !v)}>{showJson ? 'esconder o JSON enviado' : 'ver o JSON enviado'}</button>
-          )}
-          {showJson && result.enviado && <pre className="webhook-pre">{JSON.stringify(result.enviado, null, 2)}</pre>}
-        </div>
-      )}
-    </div>
-  );
-}
 
 function TestModal({ c, onClose }) {
   return (

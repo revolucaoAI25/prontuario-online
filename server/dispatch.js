@@ -2,7 +2,7 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
 import { query } from './db.js';
 import { APPOINTMENT_GROUP, APPOINTMENT_SELECT, formatAppointment } from './scheduling.js';
 import { patientContexts } from './patient-context.js';
-import { campaignPayload } from './campaign-payload.js';
+import { birthdayPayload, campaignPayload, noShowPayload, reminderPayload } from './webhook-payloads.js';
 
 const BATCH = 50;
 const CONCURRENCY = 5;
@@ -10,7 +10,6 @@ const WEBHOOK_TIMEOUT_MS = 10_000;
 // Campaign webhooks often run an assistant before answering (e.g. Chatflux).
 export const campaignTimeoutMs = () => Number(process.env.CAMPAIGN_WEBHOOK_TIMEOUT_MS) || 30_000;
 
-const isoDay = (value) => (value instanceof Date ? value.toISOString().slice(0, 10) : value);
 const TZ = 'America/Sao_Paulo';
 
 async function settingUrl(key) {
@@ -96,10 +95,10 @@ async function drain({ claimSql, markSent, markFailed, url, enrich, toPayload, d
 // rest of the patient's history and anything already booked.
 async function reminderExtras(rows) {
   const ids = rows.map((r) => r.reminder_id);
-  const [contexts, details, visits] = await Promise.all([
+  const [contexts, details] = await Promise.all([
     patientContexts(rows.map((r) => r.patient_id)),
     query(
-      `select r.id, r.created_manually, r.notes, r.source_appointment_id,
+      `select r.id, r.created_manually, r.notes,
               reminder_months_for(r.procedure_id) as months,
               to_char(r.last_done_at at time zone '${TZ}', 'YYYY-MM-DD') as last_day,
               (clinic_today() - (r.last_done_at at time zone '${TZ}')::date) as days_since,
@@ -108,47 +107,19 @@ async function reminderExtras(rows) {
        from reminders r where r.id = any($1::uuid[])`,
       [ids],
     ),
-    query(
-      `${APPOINTMENT_SELECT}
-       where a.id in (select source_appointment_id from reminders where id = any($1::uuid[]))
-       ${APPOINTMENT_GROUP}`,
-      [ids],
-    ),
   ]);
-  return {
-    contexts,
-    details: new Map(details.rows.map((r) => [r.id, r])),
-    visits: new Map(visits.rows.map((r) => [r.id, r])),
-  };
+  return { contexts, details: new Map(details.rows.map((r) => [r.id, r])) };
 }
 
-function reminderPayload(row, { contexts, details, visits }) {
-  const ctx = contexts.get(row.patient_id);
+function reminderToPayload(row, { contexts, details }) {
   const d = details.get(row.reminder_id) ?? {};
-  const source = visits.get(d.source_appointment_id);
-  let atendimento = null;
-  if (source) {
-    const { paciente, ...rest } = formatAppointment(source);
-    atendimento = rest;
-  }
-  return {
-    tipo: 'lembrete_retorno',
-    lembrete_id: row.reminder_id,
-    tentativa: row.attempts,
-    paciente: ctx.paciente,
-    procedimento: { id: row.procedure_id, nome: row.procedure_name, retorno_em_meses: d.months ?? null },
-    data_ultima_vez: d.last_day ?? null,
-    dias_desde_ultima_vez: d.days_since ?? null,
-    vezes_que_fez: d.times ?? 0,
-    data_retorno_prevista: isoDay(row.due_on),
-    atendimento_de_origem: atendimento,
-    criado_manualmente: Boolean(d.created_manually),
-    observacao: d.notes ?? null,
-    outros_retornos_pendentes: ctx.retornos_pendentes.filter((r) => r.procedimento !== row.procedure_name),
-    agendamentos_futuros: ctx.agendamentos_futuros,
-    historico: ctx.historico,
-    resumo: ctx.resumo,
-  };
+  return reminderPayload({
+    ctx: contexts.get(row.patient_id),
+    r: {
+      id: row.reminder_id, attempts: row.attempts, procedure: row.procedure_name, months: d.months,
+      lastDay: d.last_day, daysSince: d.days_since, times: d.times, dueOn: row.due_on, notes: d.notes, manual: d.created_manually,
+    },
+  });
 }
 
 export async function dispatchReminders({ deadline = Date.now() + 25_000 } = {}) {
@@ -163,7 +134,7 @@ export async function dispatchReminders({ deadline = Date.now() + 25_000 } = {})
       markSent: `select mark_reminder_sent($1)`,
       markFailed: `select mark_reminder_failed($1, $2)`,
       enrich: reminderExtras,
-      toPayload: reminderPayload,
+      toPayload: reminderToPayload,
     })),
   };
 }
@@ -180,18 +151,10 @@ export async function dispatchBirthdays({ deadline = Date.now() + 25_000 } = {})
       markSent: `select mark_birthday_sent($1)`,
       markFailed: `select mark_birthday_failed($1, $2)`,
       enrich: async (rows) => ({ contexts: await patientContexts(rows.map((r) => r.patient_id)) }),
-      toPayload: (row, { contexts }) => {
-        const ctx = contexts.get(row.patient_id);
-        return {
-          tipo: 'aniversario',
-          mensagem_id: row.message_id,
-          paciente: ctx.paciente,
-          data_nascimento: isoDay(row.birth_date),
-          idade: row.age,
-          agendamentos_futuros: ctx.agendamentos_futuros,
-          tentativa: row.attempts,
-        };
-      },
+      toPayload: (row, { contexts }) => birthdayPayload({
+        ctx: contexts.get(row.patient_id),
+        b: { id: row.message_id, attempts: row.attempts, birthDate: row.birth_date, age: row.age },
+      }),
     })),
   };
 }
@@ -206,21 +169,12 @@ async function noShowExtras(rows) {
   return { contexts, appts: new Map(appts.rows.map((r) => [r.id, r])) };
 }
 
-function noShowPayload(row, { contexts, appts }) {
-  const ctx = contexts.get(row.patient_id);
-  const { paciente, ...agendamento } = formatAppointment(appts.get(row.appointment_id));
-  return {
-    tipo: 'falta',
-    alerta_id: row.alert_id,
-    tentativa: row.attempts,
-    paciente: ctx.paciente,
-    agendamento,
-    minutos_desde_o_horario: row.minutes_late,
-    agendamentos_futuros: ctx.agendamentos_futuros,
-    retornos_pendentes: ctx.retornos_pendentes,
-    historico: ctx.historico,
-    resumo: ctx.resumo,
-  };
+function noShowToPayload(row, { contexts, appts }) {
+  const { paciente, ...appointment } = formatAppointment(appts.get(row.appointment_id));
+  return noShowPayload({
+    ctx: contexts.get(row.patient_id),
+    n: { id: row.alert_id, attempts: row.attempts, minutesLate: row.minutes_late, appointment },
+  });
 }
 
 export async function dispatchNoShows({ deadline = Date.now() + 25_000 } = {}) {
@@ -235,7 +189,7 @@ export async function dispatchNoShows({ deadline = Date.now() + 25_000 } = {}) {
       markSent: `select mark_no_show_sent($1)`,
       markFailed: `select mark_no_show_failed($1, $2)`,
       enrich: noShowExtras,
-      toPayload: noShowPayload,
+      toPayload: noShowToPayload,
     })),
   };
 }

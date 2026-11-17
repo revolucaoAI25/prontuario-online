@@ -86,23 +86,26 @@ test('due reminders are posted once, signed, then marked as sent', async () => {
   await setting('reminder_webhook_url', receiverUrl);
   const patient = await dueTodayBotox('Lara Lembrete', '(31) 98765-1111');
   const { body } = await cron();
-  const mine = received.filter((r) => r.body.paciente.id === patient);
+  const mine = received.filter((r) => r.body.paciente_id === patient);
   assert.equal(mine.length, 1);
   const payload = mine[0].body;
   assert.equal(payload.tipo, 'lembrete_retorno');
-  assert.equal(payload.procedimento.nome, 'Botox');
-  assert.equal(payload.paciente.primeiro_nome, 'Lara');
-  assert.equal(payload.paciente.whatsapp, '5531987651111');
-  assert.equal(payload.procedimento.retorno_em_meses, 4);
-  assert.equal(payload.data_retorno_prevista, payload.data_ultima_vez && (await one(db, `select due_on::text as d from reminders where patient_id = $1`, [patient])).d);
-  assert.match(payload.data_ultima_vez, /^\d{4}-\d{2}-\d{2}$/);
+  assert.ok(Object.values(payload).every((v) => ['string', 'number', 'boolean'].includes(typeof v)), 'flat: no nested objects');
+  assert.equal(payload.teste, false);
+  assert.equal(payload.procedimento, 'Botox');
+  assert.equal(payload.primeiro_nome, 'Lara');
+  assert.equal(payload.telefone, '5531987651111');
+  assert.equal(payload.retorno_em_meses, 4);
+  const due = (await one(db, `select due_on::text as d from reminders where patient_id = $1`, [patient])).d;
+  assert.equal(payload.data_retorno_prevista, due.split('-').reverse().join('/'));
+  assert.match(payload.data_ultima_vez, /^\d{2}\/\d{2}\/\d{4}$/);
   assert.ok(payload.dias_desde_ultima_vez >= 118 && payload.dias_desde_ultima_vez <= 124);
   assert.equal(payload.vezes_que_fez, 1);
-  assert.equal(payload.atendimento_de_origem.agenda.nome, 'Estética');
-  assert.deepEqual(payload.atendimento_de_origem.procedimentos, ['Botox']);
-  assert.equal(payload.atendimento_de_origem.data, payload.data_ultima_vez);
-  assert.equal(payload.historico.total_atendimentos, 1);
-  assert.deepEqual(payload.agendamentos_futuros, []);
+  assert.equal(payload.ultima_visita_agenda, 'Estética');
+  assert.equal(payload.ultima_visita_procedimentos, 'Botox');
+  assert.equal(payload.ultima_visita, payload.data_ultima_vez);
+  assert.equal(payload.total_visitas, 1);
+  assert.equal(payload.proximo_agendamento, '');
   assert.match(payload.resumo, /^Lara Lembrete\./);
   const expected = `sha256=${createHmac('sha256', 'segredo-assinatura').update(mine[0].raw).digest('hex')}`;
   assert.equal(mine[0].signature, expected);
@@ -112,7 +115,7 @@ test('due reminders are posted once, signed, then marked as sent', async () => {
   assert.equal(reminder.status, 'enviado');
   received = [];
   await cron();
-  assert.equal(received.filter((r) => r.body.paciente.id === patient).length, 0, 'not sent twice');
+  assert.equal(received.filter((r) => r.body.paciente_id === patient).length, 0, 'not sent twice');
 });
 
 test('a failing webhook keeps the reminder pending with a retry later', async () => {
@@ -127,7 +130,7 @@ test('a failing webhook keeps the reminder pending with a retry later', async ()
   failNext = 0;
   received = [];
   await cron();
-  assert.equal(received.filter((r) => r.body.paciente.id === patient).length, 0, 'waits for the backoff');
+  assert.equal(received.filter((r) => r.body.paciente_id === patient).length, 0, 'waits for the backoff');
 });
 
 test('birthdays are posted with the age', async () => {
@@ -135,10 +138,12 @@ test('birthdays are posted with the age', async () => {
   const patient = await createPatient(db, { name: 'Bia Aniversario', phone: '(31) 98765-3333' });
   await db.query(`update patients set birth_date = (clinic_today() - interval '41 years')::date where id = $1`, [patient]);
   await cron();
-  const payload = received.find((r) => r.body.tipo === 'aniversario' && r.body.paciente.id === patient)?.body;
+  const payload = received.find((r) => r.body.tipo === 'aniversario' && r.body.paciente_id === patient)?.body;
   assert.equal(payload.idade, 41);
-  assert.equal(payload.paciente.data_nascimento, payload.data_nascimento);
-  assert.equal(payload.paciente.whatsapp, '5531987653333');
+  assert.match(payload.data_nascimento, /^\d{2}\/\d{2}\/\d{4}$/);
+  assert.equal(payload.telefone, '5531987653333');
+  assert.equal(payload.primeiro_nome, 'Bia');
+  assert.ok(Object.values(payload).every((v) => ['string', 'number', 'boolean'].includes(typeof v)));
 });
 
 const evolution = (payload, secret = 'segredo-evolution') =>
@@ -332,7 +337,7 @@ async function pastBooking(patient, { hoursAgo = 3, status = 'agendado', agenda 
   )).id;
 }
 
-const noShowsFor = (patient) => received.filter((r) => r.body.tipo === 'falta' && r.body.paciente.id === patient);
+const noShowsFor = (patient) => received.filter((r) => r.body.tipo === 'falta' && r.body.paciente_id === patient);
 
 test('the no-show endpoint takes the cron secret or the database token, nothing else', async () => {
   assert.equal((await faltas({})).status, 401);
@@ -352,15 +357,17 @@ test('a patient not marked as arrived 2 hours after the booking is posted once',
   const mine = noShowsFor(patient);
   assert.equal(mine.length, 1);
   const p = mine[0].body;
-  assert.equal(p.agendamento.id, appt);
-  assert.equal(p.agendamento.status, 'confirmado');
-  assert.equal(p.agendamento.agenda.nome, 'Dr. Everson Rezeck');
-  assert.equal(p.agendamento.paciente, undefined, 'the patient is at the top level');
-  assert.equal(p.paciente.primeiro_nome, 'Fabio');
-  assert.equal(p.paciente.whatsapp, '5531987654400');
+  assert.ok(Object.values(p).every((v) => ['string', 'number', 'boolean'].includes(typeof v)), 'flat: no nested objects');
+  assert.equal(p.agendamento_id, appt);
+  assert.equal(p.agendamento_status, 'Confirmado pelo paciente');
+  assert.equal(p.agendamento_agenda, 'Dr. Everson Rezeck');
+  assert.match(p.agendamento_data, /^\d{2}\/\d{2}\/\d{4}$/);
+  assert.match(p.agendamento_horario, /^\d{2}:\d{2}$/);
+  assert.equal(p.primeiro_nome, 'Fabio');
+  assert.equal(p.telefone, '5531987654400');
   assert.ok(p.minutos_desde_o_horario >= 179 && p.minutos_desde_o_horario <= 182);
   assert.equal(p.tentativa, 1);
-  assert.deepEqual(p.agendamentos_futuros, []);
+  assert.equal(p.proximo_agendamento, '');
   assert.match(p.resumo, /^Fabio Faltou\./);
   assert.equal(mine[0].signature, `sha256=${createHmac('sha256', 'segredo-assinatura').update(mine[0].raw).digest('hex')}`);
   assert.equal((await one(db, `select status from no_show_alerts where appointment_id = $1`, [appt])).status, 'enviado');
@@ -387,7 +394,7 @@ test('arrived, too early, too old, cancelled, removed, typed in later, rebooked 
   cases.remarcou = await pastBooking(rebooked, { status: 'pediu_remarcar' });
   await pastBooking(rebooked, { hoursAgo: -48 });
   await faltas();
-  const ids = new Set(received.filter((r) => r.body.tipo === 'falta').map((r) => r.body.agendamento.id));
+  const ids = new Set(received.filter((r) => r.body.tipo === 'falta').map((r) => r.body.agendamento_id));
   for (const [name, id] of Object.entries(cases)) assert.ok(!ids.has(id), `${name} was posted`);
 });
 

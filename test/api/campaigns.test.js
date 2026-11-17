@@ -266,7 +266,7 @@ test('a webhook that does not answer in time counts as sent without confirmation
 });
 
 test('"Enviar teste": the webhook gets a made-up patient with teste: true; only the super admin can', async () => {
-  const { testCampaignWebhook } = await import('../../server/campaign-test.js');
+  const { testCampaignWebhook } = await import('../../server/webhook-test.js');
   const staff = (id) => one(db, `select * from staff where id = $1`, [id]);
   await assert.rejects(testCampaignWebhook({ url: hookUrl }, null, await staff(admin)), /super admin/);
   await assert.rejects(testCampaignWebhook({ url: 'ftp://x' }, null, await staff(superadmin)), /https/);
@@ -304,4 +304,31 @@ test('"Enviar teste": the webhook gets a made-up patient with teste: true; only 
   const down = await testCampaignWebhook({ url: 'http://localhost:1/nada' }, null, await staff(superadmin));
   assert.equal(down.recebido, false);
   assert.match(down.erro, /nada respondendo|não foi possível conectar/);
+});
+
+test('"Enviar teste" for the reminder, birthday and no-show webhooks: same flat format as a real send', async () => {
+  const { testWebhook } = await import('../../server/webhook-test.js');
+  const me = await one(db, `select * from staff where id = $1`, [superadmin]);
+  const flat = (o) => Object.values(o).every((v) => ['string', 'number', 'boolean'].includes(typeof v));
+
+  const lembrete = await testWebhook({ tipo: 'lembrete', url: hookUrl, telefone: '31999991234' }, null, me);
+  assert.equal(lembrete.recebido, true);
+  let sent = received.at(-1);
+  assert.deepEqual([sent.tipo, sent.teste, sent.procedimento, sent.telefone], ['lembrete_retorno', true, 'Botox', '5531999991234']);
+  assert.match(sent.data_retorno_prevista, /^\d{2}\/\d{2}\/\d{4}$/);
+  assert.ok(flat(sent));
+
+  await testWebhook({ tipo: 'aniversario', url: hookUrl }, null, me);
+  sent = received.at(-1);
+  assert.deepEqual([sent.tipo, sent.teste, sent.telefone], ['aniversario', true, '5531900000000']);
+  assert.equal(sent.data_nascimento.slice(0, 5), new Date().toISOString().slice(5, 10).split('-').reverse().join('/'), 'born today');
+  assert.ok(flat(sent));
+
+  await testWebhook({ tipo: 'falta', url: hookUrl }, null, me);
+  sent = received.at(-1);
+  assert.deepEqual([sent.tipo, sent.teste, sent.agendamento_agenda, sent.minutos_desde_o_horario], ['falta', true, 'Dr. Everson Rezeck', 125]);
+  assert.ok(flat(sent));
+
+  await assert.rejects(testWebhook({ tipo: 'outro', url: hookUrl }, null, me), /desconhecido/);
+  await assert.rejects(testWebhook({ tipo: 'falta', url: hookUrl }, null, await one(db, `select * from staff where id = $1`, [admin])), /super admin/);
 });
