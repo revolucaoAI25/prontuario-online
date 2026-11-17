@@ -64,13 +64,13 @@ export function ProcedurePicker({ value, onChange }) {
         {open && (matches.length > 0 || (query.trim() && !exact)) && (
           <div className="picker-list">
             {matches.map((p) => (
-              <div key={p.id} className="picker-item" onMouseDown={() => { onChange([...value, p]); setQuery(''); }}>
+              <div key={p.id} className="picker-item" onPointerDown={(e) => e.preventDefault()} role="option" tabIndex={-1} onClick={() => { onChange([...value, p]); setQuery(''); }}>
                 <div className="grow">{p.name}</div>
                 <span className="small muted">{p.reminder_months ? `retorno ${p.reminder_months}m` : 'retorno padrão'}</span>
               </div>
             ))}
             {query.trim() && !exact && (
-              <div className="picker-item" onMouseDown={addNew}>
+              <div className="picker-item" onPointerDown={(e) => e.preventDefault()} role="option" tabIndex={-1} onClick={addNew}>
                 <Plus size={15} /> Cadastrar “{query.trim()}”
               </div>
             )}

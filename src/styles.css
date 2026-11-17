@@ -80,6 +80,7 @@ a:hover { text-decoration-color: currentColor; }
 
 @keyframes fade-in { from { opacity: 0; } }
 @keyframes pop-in { from { opacity: 0; transform: translate(-50%, -48%) scale(0.98); } }
+@keyframes sheet-up { from { transform: translateY(24px); opacity: 0; } }
 @keyframes slide-in { from { transform: translateX(24px); opacity: 0; } }
 @keyframes rise-in { from { transform: translateY(8px); opacity: 0; } }
 
@@ -353,9 +354,13 @@ input[type='checkbox'], input[type='radio'] { accent-color: var(--brand); width:
 .overlay { position: fixed; inset: 0; background: rgba(36, 28, 20, 0.32); backdrop-filter: blur(2px); z-index: 40; animation: fade-in 0.18s ease; }
 .modal {
   position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 45; width: min(540px, calc(100vw - 32px));
-  max-height: calc(100vh - 48px); overflow: auto; background: var(--surface); border-radius: 18px; box-shadow: var(--shadow-lg);
+  max-height: calc(100vh - 48px); max-height: calc(100dvh - 48px); background: var(--surface); border-radius: 18px; box-shadow: var(--shadow-lg);
   animation: pop-in 0.22s var(--ease);
+  /* title and buttons stay put; only the content scrolls */
+  display: flex; flex-direction: column; overflow: hidden;
 }
+.modal > .modal-head, .modal > .modal-foot { flex: none; }
+.modal > .modal-body { flex: 1 1 auto; min-height: 0; overflow: auto; overscroll-behavior: contain; }
 .modal.wide { width: min(780px, calc(100vw - 32px)); }
 .modal-head { display: flex; align-items: center; justify-content: space-between; padding: 20px 22px 8px; gap: 10px; }
 .modal-head h2 { font-size: 17px; font-weight: 800; }
@@ -783,3 +788,52 @@ body.focus-mode .record-head .avatar.lg { width: 40px; height: 40px; font-size: 
 .webhook-result.ok { background: var(--brand-softer); color: var(--brand-strong); border: 1px solid #cfe3e0; }
 .webhook-result.fail { background: var(--danger-bg); color: var(--danger); border: 1px solid #eccac5; }
 .webhook-pre { margin: 0; max-height: 220px; overflow: auto; background: var(--surface); color: var(--ink-2); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; font: 11.5px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
+
+/* ---------- Phones ---------- */
+@media (max-width: 700px) {
+  /* Dialogs become a sheet at the bottom: always fits the visible screen
+     (dvh leaves out the browser bars), buttons always reachable. */
+  .modal, .modal.wide {
+    top: auto; bottom: 0; left: 0; right: 0; transform: none; width: 100%;
+    max-height: calc(100vh - 12px); max-height: calc(100dvh - 12px);
+    border-radius: 18px 18px 0 0; animation: sheet-up 0.22s var(--ease);
+  }
+  .modal-head { padding: 16px 16px 6px; }
+  .modal-body { padding: 6px 16px 14px; }
+  .modal-foot { padding: 12px 16px calc(12px + env(safe-area-inset-bottom)); border-radius: 0; flex-wrap: wrap; }
+  .modal-foot > .grow { flex-basis: 100%; }
+}
+/* iPhone zooms into any field with text under 16px (and stays zoomed). */
+@media (max-width: 700px), (pointer: coarse) {
+  .input, .select, .textarea, .search input { font-size: 16px; }
+}
+
+/* Phone bottom bar: five items and "Mais" (the rest, and Sair) */
+.more-btn { display: none; }
+.more-dot { position: absolute; top: 8px; right: 18px; width: 8px; height: 8px; border-radius: 99px; background: var(--danger); }
+.more-sheet {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 45; background: var(--surface); border-radius: 18px 18px 0 0;
+  box-shadow: var(--shadow-lg); padding: 14px 16px calc(16px + env(safe-area-inset-bottom)); animation: sheet-up 0.2s var(--ease);
+}
+.more-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.more-item {
+  position: relative; display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 14px 6px; border-radius: 14px;
+  border: 1px solid var(--border); background: var(--surface-2); color: var(--ink-2); font: 600 12.5px 'Manrope', sans-serif; text-decoration: none; cursor: pointer;
+}
+.more-item svg { width: 22px; height: 22px; stroke-width: 1.75; }
+.more-item.active { background: var(--brand-soft); color: var(--brand-strong); border-color: #bcd8d4; }
+.more-item .bubble { position: absolute; top: 6px; right: 8px; background: var(--danger); color: #fff; }
+@media (max-width: 700px) {
+  .rail-nav { overflow-x: hidden; justify-content: space-around; }
+  .rail-btn { width: auto; flex: 1 1 0; min-width: 0; min-height: 54px; }
+  .rail-btn span.label { font-size: 10px; }
+  .rail-btn.phone-more { display: none; }
+  .more-btn { display: flex; }
+  /* Booking opened from the agenda: the save bar stays at the bottom */
+  .sheet-actions {
+    position: sticky; bottom: -16px; z-index: 3; background: var(--bg); margin: 8px -16px -16px;
+    padding: 10px 16px calc(12px + env(safe-area-inset-bottom)); box-shadow: 0 -6px 16px rgba(36, 28, 20, 0.06);
+  }
+  .sheet-actions .btn { flex: 1 1 auto; }
+  .sheet-actions .grow { display: none; }
+}

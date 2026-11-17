@@ -1,7 +1,7 @@
 import { Suspense, useEffect, useRef, useState } from 'react';
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
 import {
-  CalendarDays, Users, FileText, Wallet, Package, MessagesSquare, MessageCircle, BellRing, Settings, LogOut, ClipboardList, Contact, Megaphone, AlertTriangle,
+  CalendarDays, Users, FileText, Wallet, Package, MessagesSquare, MessageCircle, BellRing, Settings, LogOut, ClipboardList, Contact, Megaphone, AlertTriangle, MoreHorizontal, X,
 } from 'lucide-react';
 import { supabase } from '../lib/supabase.js';
 import { useAuth } from '../context/AuthContext.jsx';
@@ -10,6 +10,9 @@ import { installSoundUnlock, notify, playChime } from '../lib/sound.js';
 import { CHANNEL_SELECT, channelColor } from '../lib/channels.js';
 import { isMobileDevice } from '../lib/device.js';
 import { Avatar } from './ui.jsx';
+
+// How many fit in the bottom bar on a phone (the rest go under "Mais").
+const PHONE_BAR = 5;
 
 const NAV = [
   { to: '/agenda', label: 'Agenda', icon: CalendarDays },
@@ -185,22 +188,52 @@ function useWhatsAppAlert() {
 export function Layout() {
   const { staff, isAdmin, isReception, isSuperAdmin, signOut } = useAuth();
   const waAlert = useWhatsAppAlert();
-  const onWhatsApp = useLocation().pathname.startsWith('/conversas');
+  const location = useLocation();
+  const onWhatsApp = location.pathname.startsWith('/conversas');
   const chat = useUnreadChat(staff?.id, staff?.mute_chat, staff?.chat_muted_channels);
   const unread = { whatsapp: useUnreadWhatsApp(staff?.mute_whatsapp), tasks: useDueTasks(isReception) };
   const mobile = isMobileDevice();
   useEffect(() => { installSoundUnlock(); }, []);
   // Financeiro on a phone: only the administrator.
+  // Phones: the first ones in the bottom bar, the rest under "Mais".
+  const [more, setMore] = useState(false);
+  useEffect(() => { setMore(false); }, [location.pathname]);
   const visible = (item) => (item.superadmin ? isSuperAdmin : item.admin ? isAdmin : item.reception ? isReception : true) && !(item.desktop && mobile && !isAdmin);
+  const items = NAV.filter(visible);
+  const overflow = items.slice(PHONE_BAR);
+  const overflowActive = overflow.some((item) => location.pathname.startsWith(item.to));
+  const overflowBadge = overflow.some((item) => item.badge && item.badge !== 'chat' && unread[item.badge] > 0);
+
   return (
     <div className="app">
+      {more && (
+        <>
+          <div className="overlay" onClick={() => setMore(false)} />
+          <div className="more-sheet" role="dialog" aria-label="Mais opções">
+            <div className="row" style={{ marginBottom: 6 }}>
+              <b className="grow">{staff?.full_name}</b>
+              <button type="button" className="icon-btn" onClick={() => setMore(false)} aria-label="Fechar"><X /></button>
+            </div>
+            <div className="more-grid">
+              {overflow.map(({ to, label, icon: Icon, badge }) => (
+                <NavLink key={to} to={to} className={({ isActive }) => `more-item ${isActive ? 'active' : ''}`}>
+                  <Icon />
+                  <span>{label}</span>
+                  {badge && badge !== 'chat' && unread[badge] > 0 && <span className="bubble">{unread[badge]}</span>}
+                </NavLink>
+              ))}
+              <button type="button" className="more-item" onClick={signOut}><LogOut /><span>Sair</span></button>
+            </div>
+          </div>
+        </>
+      )}
       <aside className="rail">
         <NavLink to="/agenda" className="logo" title="Everson Rezeck · Medicina Estética">
           <img src="/brand/logo-mark.png" alt="Everson Rezeck" />
         </NavLink>
         <nav className="rail-nav">
-          {NAV.filter(visible).map(({ to, label, icon: Icon, badge }) => (
-            <NavLink key={to} to={to} className={({ isActive }) => `rail-btn ${isActive ? 'active' : ''}`}>
+          {items.map(({ to, label, icon: Icon, badge }, i) => (
+            <NavLink key={to} to={to} className={({ isActive }) => `rail-btn ${isActive ? 'active' : ''} ${i >= PHONE_BAR ? 'phone-more' : ''}`}>
               <Icon />
               <span className="label">{label}</span>
               {badge === 'chat' && <ChatBubbles list={chat} />}
@@ -209,6 +242,13 @@ export function Layout() {
               )}
             </NavLink>
           ))}
+          {items.length > PHONE_BAR && (
+            <button type="button" className={`rail-btn more-btn ${overflowActive ? 'active' : ''}`} onClick={() => setMore(true)} aria-label="Mais opções">
+              <MoreHorizontal />
+              <span className="label">Mais</span>
+              {overflowBadge && <span className="more-dot" />}
+            </button>
+          )}
         </nav>
         <div className="rail-user">
           <Avatar name={staff?.full_name} size="sm" />

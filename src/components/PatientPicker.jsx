@@ -66,7 +66,7 @@ export function PatientPicker({ value, onChange, autoFocus }) {
       {open && query.trim().length >= 2 && (
         <div className="picker-list">
           {results.map((p) => (
-            <div key={p.id} className="picker-item" onMouseDown={() => onChange(p)}>
+            <div key={p.id} className="picker-item" onPointerDown={(e) => e.preventDefault()} role="option" tabIndex={-1} onClick={() => onChange(p)}>
               <Avatar name={p.full_name} />
               <div>
                 <div style={{ fontWeight: 700 }}>{p.full_name}</div>
@@ -76,7 +76,7 @@ export function PatientPicker({ value, onChange, autoFocus }) {
           ))}
           <div
             className="picker-item"
-            onMouseDown={() => onChange({ isNew: true, full_name: /\d/.test(query) ? '' : query.trim(), phone: /\d/.test(query) ? query.trim() : '' })}
+            onPointerDown={(e) => e.preventDefault()} role="option" tabIndex={-1} onClick={() => onChange({ isNew: true, full_name: /\d/.test(query) ? '' : query.trim(), phone: /\d/.test(query) ? query.trim() : '' })}
           >
             <span className="avatar"><UserPlus size={15} /></span>
             <div><div style={{ fontWeight: 700 }}>Cadastrar novo paciente</div><div className="sub">“{query.trim()}”</div></div>
