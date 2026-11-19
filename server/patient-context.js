@@ -1,6 +1,6 @@
 import { query } from './db.js';
 import { ApiError } from './http.js';
-import { APPOINTMENT_GROUP, APPOINTMENT_SELECT, formatAppointment, parseUuid, upcomingFor } from './scheduling.js';
+import { APPOINTMENT_GROUP, APPOINTMENT_SELECT, formatAppointment, lastVisitsFor, lastVisitsText, parseUuid, upcomingFor } from './scheduling.js';
 
 // What a patient's history looks like at a glance, for the AI agent
 // (/api/pacientes/contexto) and for the reminder webhook. Record (prontuário)
@@ -205,7 +205,11 @@ export async function patientContext(body) {
   } else {
     throw new ApiError(400, 'campo_obrigatorio', 'Informe "telefone" (ou "id").', { campo: 'telefone' });
   }
-  const contexts = await patientContexts(ids);
-  const pacientes = ids.map((id) => contexts.get(id)).filter(Boolean);
+  const [contexts, last] = await Promise.all([patientContexts(ids), lastVisitsFor(ids, 3)]);
+  const pacientes = ids.map((id) => contexts.get(id)).filter(Boolean).map((ctx) => ({
+    ...ctx,
+    ultimos_atendimentos: last.get(ctx.paciente.id) ?? [],
+    ultimos_atendimentos_texto: lastVisitsText(last.get(ctx.paciente.id)),
+  }));
   return { encontrado: pacientes.length > 0, total: pacientes.length, pacientes };
 }

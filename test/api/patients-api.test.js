@@ -118,3 +118,36 @@ test('reactivation: lapsed patients with WhatsApp, nothing booked and not contac
   const bad = await call('pacientes/reativacao', { limite: 9999 });
   assert.equal(bad.body.erro.codigo, 'campo_invalido');
 });
+
+test('buscar and contexto bring the last 3 visits the patient came to, with what was done', async () => {
+  const agenda = (await one(db, `select id from agendas where name = 'Estética'`)).id;
+  const p = await one(db, `insert into patients (full_name, phone) values ('Vera Visitas', '(31) 97777-0001') returning id`);
+  const botox = (await one(db, `insert into procedures (name) values ('Botox Teste') returning id`)).id;
+  const visit = async (daysAgo, status, withProcedure) => {
+    const a = await one(db,
+      `insert into appointments (agenda_id, patient_id, starts_at, ends_at, status)
+       values ($1, $2, now() - make_interval(days => $3), now() - make_interval(days => $3) + interval '1 hour', $4) returning id`,
+      [agenda, p.id, daysAgo, status]);
+    if (withProcedure) await db.query(`insert into appointment_procedures (appointment_id, procedure_id) values ($1, $2)`, [a.id, botox]);
+  };
+  await visit(200, 'chegou', true);
+  await visit(100, 'chegou', false);
+  await visit(60, 'nao_compareceu', true); // missed: not something she did
+  await visit(30, 'chegou', true);
+  await visit(10, 'chegou', true);
+
+  const found = (await call('pacientes/buscar', { telefone: '31977770001' })).body.pacientes[0];
+  assert.equal(found.ultimos_atendimentos.length, 3);
+  assert.deepEqual(found.ultimos_atendimentos.map((v) => v.procedimentos), [['Botox Teste'], ['Botox Teste'], []]);
+  assert.ok(found.ultimos_atendimentos[0].data > found.ultimos_atendimentos[1].data, 'newest first');
+  assert.equal(found.ultimos_atendimentos[0].agenda, 'Estética');
+  assert.match(found.ultimos_atendimentos_texto, /^\d{2}\/\d{2}\/\d{4} · Estética: Botox Teste \| .* \| \d{2}\/\d{2}\/\d{4} · Estética: /);
+
+  const ctx = (await call('pacientes/contexto', { telefone: '31977770001' })).body.pacientes[0];
+  assert.deepEqual(ctx.ultimos_atendimentos, found.ultimos_atendimentos);
+
+  const none = (await call('pacientes/cadastrar', { nome: 'Nina Nova', telefone: '31977770002' })).body;
+  const fresh = (await call('pacientes/buscar', { id: none.paciente.id })).body.pacientes[0];
+  assert.deepEqual(fresh.ultimos_atendimentos, []);
+  assert.equal(fresh.ultimos_atendimentos_texto, 'Ainda não fez nenhum atendimento na clínica.');
+});

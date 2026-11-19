@@ -477,6 +477,39 @@ export async function upcomingFor(patientIds) {
   return byPatient;
 }
 
+// The last visits the patient actually came to ("chegou"), newest first:
+// what they did at the clinic. { data, agenda, tipo, procedimentos } plus one
+// line of text per patient for the assistant.
+const brDate = (iso) => (iso ? String(iso).slice(0, 10).split('-').reverse().join('/') : '');
+
+export async function lastVisitsFor(patientIds, limit = 3) {
+  const byPatient = new Map();
+  if (patientIds.length === 0) return byPatient;
+  const { rows } = await query(
+    `select * from (
+       select s.*, row_number() over (partition by s.patient_id order by s.starts_at desc) as rn
+       from (${APPOINTMENT_SELECT}
+             where a.patient_id = any($1::uuid[]) and a.status = 'chegou' and a.starts_at <= now()
+             ${APPOINTMENT_GROUP}) s
+     ) t where rn <= $2 order by starts_at desc`,
+    [patientIds, limit],
+  );
+  for (const row of rows) {
+    const a = formatAppointment(row);
+    const visit = { data: a.data, agenda: a.agenda?.nome ?? null, tipo: a.tipo?.nome ?? null, procedimentos: a.procedimentos };
+    if (!byPatient.has(row.patient_id)) byPatient.set(row.patient_id, []);
+    byPatient.get(row.patient_id).push(visit);
+  }
+  return byPatient;
+}
+
+export function lastVisitsText(visits) {
+  if (!visits?.length) return 'Ainda não fez nenhum atendimento na clínica.';
+  return visits
+    .map((v) => `${brDate(v.data)} · ${v.agenda ?? ''}: ${v.procedimentos.length ? v.procedimentos.join(', ') : (v.tipo ?? 'atendimento')}`)
+    .join(' | ');
+}
+
 export async function findPatients(body) {
   let rows = [];
   if (body.id) {
@@ -494,10 +527,16 @@ export async function findPatients(body) {
   } else {
     throw new ApiError(400, 'campo_obrigatorio', 'Informe "telefone", "cpf", "nome" ou "id".', { campo: 'telefone' });
   }
-  const upcoming = await upcomingFor(rows.map((r) => r.id));
+  const ids = rows.map((r) => r.id);
+  const [upcoming, last] = await Promise.all([upcomingFor(ids), lastVisitsFor(ids, 3)]);
   return {
     total: rows.length,
-    pacientes: rows.map((r) => ({ ...formatPatient(r), proximos_agendamentos: upcoming.get(r.id) ?? [] })),
+    pacientes: rows.map((r) => ({
+      ...formatPatient(r),
+      proximos_agendamentos: upcoming.get(r.id) ?? [],
+      ultimos_atendimentos: last.get(r.id) ?? [],
+      ultimos_atendimentos_texto: lastVisitsText(last.get(r.id)),
+    })),
   };
 }
 

@@ -79,7 +79,27 @@ Opcionais: `agenda` (mudar de agenda), `duracao_minutos`. Mantém a duração e 
 ## Pacientes
 
 ### `POST /pacientes/buscar`
-Um dos campos: `telefone`, `cpf`, `nome` ou `id`. Traz os próximos agendamentos de cada paciente.
+Um dos campos: `telefone`, `cpf`, `nome` ou `id`. Para cada paciente encontrado:
+`id`, `nome`, `telefone`, `cpf`, `email`, `data_nascimento`, os `proximos_agendamentos` e os
+**3 últimos atendimentos em que ele veio** (marcados como "Chegou"), do mais recente para o mais antigo.
+```json
+{
+  "ok": true, "total": 1,
+  "pacientes": [{
+    "id": "...", "nome": "Maria Souza", "telefone": "(31) 99999-0000", "cpf": "123.456.789-09",
+    "email": null, "data_nascimento": "1985-11-02",
+    "proximos_agendamentos": [ "...objeto agendamento..." ],
+    "ultimos_atendimentos": [
+      { "data": "2026-11-18", "agenda": "Dr. Everson Rezeck", "tipo": "Consulta", "procedimentos": ["Ultraformer"] },
+      { "data": "2026-06-24", "agenda": "Dr. Everson Rezeck", "tipo": "Consulta", "procedimentos": [] },
+      { "data": "2025-09-18", "agenda": "Estética", "tipo": "Consulta", "procedimentos": ["Limpeza de pele"] }
+    ],
+    "ultimos_atendimentos_texto": "18/11/2026 · Dr. Everson Rezeck: Ultraformer | 24/06/2026 · Dr. Everson Rezeck: Consulta | 18/09/2025 · Estética: Limpeza de pele"
+  }]
+}
+```
+Sem procedimento registrado na visita, o texto mostra o tipo do atendimento. Quem nunca veio:
+`"ultimos_atendimentos": []` e o texto `"Ainda não fez nenhum atendimento na clínica."`.
 
 ### `POST /pacientes/cadastrar`
 Mesmos campos do objeto `paciente`. Se já existir (CPF ou telefone + nome), completa os campos
@@ -117,6 +137,8 @@ ser de mais de um paciente (mãe e filha): vêm todos, o mais recente primeiro.
   }]
 }
 ```
+- `ultimos_atendimentos` e `ultimos_atendimentos_texto`: os 3 últimos atendimentos em que o
+  paciente veio, no mesmo formato de `pacientes/buscar`.
 - `resumo` é um texto pronto para colocar no contexto da IA.
 - `agendamentos_futuros` inclui os agendados, confirmados e os que pediram para remarcar.
 - O texto do prontuário **não** é enviado (só quantas anotações existem).
