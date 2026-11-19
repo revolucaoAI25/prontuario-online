@@ -422,6 +422,8 @@ input[type='checkbox'], input[type='radio'] { accent-color: var(--brand); width:
 .entry.same-day { padding-top: 0; }
 .entry.same-day::before { display: none; }
 .entry.same-day .entry-top { position: absolute; right: 0; top: 0; }
+/* room for Editar/apagar at the right of the first line */
+.entry.same-day .entry-text { padding-right: 120px; }
 .entry.same-day .entry-text { margin-top: 0; }
 .entry-plus { font-weight: 800; color: var(--brand); }
 .entry-text { white-space: pre-wrap; font-size: 14px; color: var(--ink); margin-top: 4px; overflow-wrap: anywhere; line-height: 1.55; }
@@ -836,4 +838,25 @@ body.focus-mode .record-head .avatar.lg { width: 40px; height: 40px; font-size: 
   }
   .sheet-actions .btn { flex: 1 1 auto; }
   .sheet-actions .grow { display: none; }
+}
+
+/* Prontuário on phones and tablets: one page that scrolls (header, new
+   entry, every entry, then appointments and history), instead of columns
+   that scroll on their own and squeezed the entries out of sight. */
+@media (max-width: 900px) {
+  .page.record-page { overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
+  .record-page > * { flex: none; }
+  .record-page .record-layout { display: flex; flex-direction: column; flex: none; min-height: auto; gap: 12px; }
+  .record-page .record-layout > * { flex: none; min-height: auto !important; }
+  .record-page .timeline.scroll, .record-page .record-layout > .stack.scroll { overflow: visible; }
+  .record-page .record-layout.focus > .stack.scroll, .record-page .record-layout.no-side > .stack.scroll { display: none; }
+}
+@media (max-width: 700px) {
+  /* same-day entries: the buttons on their own line, never over the text */
+  .entry.same-day .entry-top { position: static; justify-content: flex-end; }
+  .entry.same-day .entry-text { padding-right: 0; }
+  .record-page > .record-head { padding: 14px; gap: 10px; margin-bottom: 12px; }
+  .record-page > .record-head h1 { font-size: 19px; }
+  .record-page .composer { padding: 12px 14px; }
+  .record-page .timeline { padding: 6px 14px 14px; }
 }

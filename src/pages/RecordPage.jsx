@@ -348,7 +348,7 @@ export function RecordPage() {
   const wa = whatsappLink(patient.phone);
 
   return (
-    <div className="page">
+    <div className="page record-page">
       <div className="card record-head">
         <button type="button" className="icon-btn" onClick={() => navigate(-1)} aria-label="Voltar"><ArrowLeft /></button>
         <Avatar name={patient.full_name} size="lg" />
