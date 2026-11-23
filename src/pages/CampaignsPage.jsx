@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Ban, Megaphone, Pause, Pencil, Play, Plus, Search, Send, Trash2, Users, X } from 'lucide-react';
+import { Ban, Download, Megaphone, Pause, Pencil, Play, Plus, Search, Send, Trash2, Users, X } from 'lucide-react';
 import { supabase, must } from '../lib/supabase.js';
 import { useInterval, useLoad } from '../lib/hooks.js';
 import { useToast } from '../context/ToastContext.jsx';
 import { formatDay, formatDateTime, localDay } from '../lib/time.js';
 import { Empty, Field, Modal } from '../components/ui.jsx';
 import { WebhookTester } from '../components/WebhookTester.jsx';
+import { buildXlsx, downloadBytes } from '../lib/xlsx.js';
+import { firstName, firstTwoNames, properName, whatsappDigits } from '../lib/names.js';
 import { PatientPicker } from '../components/PatientPicker.jsx';
 
 const WEEKDAYS = [[1, 'Seg'], [2, 'Ter'], [3, 'Qua'], [4, 'Qui'], [5, 'Sex'], [6, 'Sáb'], [0, 'Dom']];
@@ -25,7 +27,7 @@ const errorText = (error) => ERRORS[String(error?.message ?? '').match(/\w+$/)?.
 
 // About how long the campaign takes, at its pace and allowed hours.
 function estimate(total, c) {
-  if (!total) return '';
+  if (!total || !c) return '';
   const avgGap = (Number(c.gap_min_seconds) + Number(c.gap_max_seconds)) / 2;
   const perWindow = Math.max(1, Math.min(Number(c.batch_size), avgGap > 0 ? Math.floor((Number(c.window_minutes) * 60) / avgGap) + 1 : Number(c.batch_size)));
   const perHour = (perWindow * 60) / Number(c.window_minutes);
@@ -463,6 +465,90 @@ function CampaignCard({ c, onEdit, onRecipients, onChanged }) {
   );
 }
 
+// "Exportar base": the same audience filters, as an Excel sheet (name, first
+// name, first and second names, WhatsApp number 55+DDD+number), to work
+// with the list outside the Disparos.
+const EXPORT_PAGE = 1000;
+
+async function audienceForExport(audience, onProgress) {
+  const { filtros, excluir, incluir, so_selecionados: only } = audience;
+  const byId = new Map();
+  if (!only) {
+    for (let offset = 0; ; offset += EXPORT_PAGE) {
+      const rows = await must(supabase.rpc('campaign_audience', { p_filters: filtros, p_limit: EXPORT_PAGE, p_offset: offset }));
+      for (const r of rows) byId.set(r.patient_id, { id: r.patient_id, name: r.full_name, phone: r.phone, last: r.last_visit, visits: r.visits });
+      const total = Number(rows[0]?.total ?? 0);
+      onProgress(byId.size, total || byId.size);
+      // stop on the count, not on a short page (the server may cap a page)
+      if (rows.length === 0 || offset + rows.length >= total) break;
+      offset += rows.length - EXPORT_PAGE;
+    }
+    for (const id of excluir) byId.delete(id);
+  }
+  const extra = incluir.filter((id) => !byId.has(id));
+  for (let i = 0; i < extra.length; i += 200) {
+    const ids = extra.slice(i, i + 200);
+    const [people, visits] = await Promise.all([
+      must(supabase.from('patients').select('id, full_name, phone, allow_messages').in('id', ids)),
+      must(supabase.from('appointments').select('patient_id, starts_at').in('patient_id', ids).eq('status', 'chegou').order('starts_at', { ascending: false })),
+    ]);
+    for (const p of people) {
+      if (!p.allow_messages) continue;
+      const mine = visits.filter((v) => v.patient_id === p.id);
+      byId.set(p.id, { id: p.id, name: p.full_name, phone: p.phone, last: mine[0] ? localDay(mine[0].starts_at) : null, visits: mine.length });
+    }
+  }
+  return [...byId.values()];
+}
+
+function ExportModal({ agendas, procedures, onClose }) {
+  const toast = useToast();
+  const [audience, setAudience] = useState({ filtros: {}, excluir: [], incluir: [], so_selecionados: false });
+  const [progress, setProgress] = useState(null);
+
+  async function run() {
+    if (audience.so_selecionados && audience.incluir.length === 0) return toast.error('Escolha os pacientes.');
+    setProgress('Preparando…');
+    try {
+      const people = await audienceForExport(audience, (done, total) => setProgress(`Preparando… ${done.toLocaleString('pt-BR')} de ${Number(total).toLocaleString('pt-BR')}`));
+      const rows = [];
+      let noPhone = 0;
+      for (const p of people) {
+        const phone = whatsappDigits(p.phone);
+        if (!phone) { noPhone++; continue; }
+        rows.push([properName(p.name), firstName(p.name), firstTwoNames(p.name), phone, p.last ? { date: String(p.last) } : '', Number(p.visits) || 0]);
+      }
+      rows.sort((a, b) => a[0].localeCompare(b[0], 'pt-BR'));
+      const bytes = buildXlsx({
+        sheet: 'Base',
+        columns: [
+          { header: 'Nome completo', width: 36 }, { header: 'Primeiro nome', width: 16 }, { header: 'Primeiro e segundo nome', width: 24 },
+          { header: 'Telefone (WhatsApp)', width: 18 }, { header: 'Data da última visita', width: 20 }, { header: 'Visitas', width: 9 },
+        ],
+        rows,
+      });
+      downloadBytes(bytes, `base-pacientes-${localDay()}.xlsx`);
+      toast.info(`${rows.length.toLocaleString('pt-BR')} pacientes exportados${noPhone ? ` (${noPhone} sem celular válido ficaram de fora)` : ''}.`);
+      onClose();
+    } catch (error) {
+      toast.error(error);
+    } finally {
+      setProgress(null);
+    }
+  }
+
+  return (
+    <Modal title="Exportar base" wide onClose={onClose}
+      footer={<>
+        <span className="grow small muted">{progress ?? 'Planilha do Excel: nome completo, primeiro nome, primeiro e segundo nome, telefone 55 + DDD + número, data da última visita e número de visitas.'}</span>
+        <button type="button" className="btn" onClick={onClose}>Cancelar</button>
+        <button type="button" className="btn btn-primary" disabled={Boolean(progress)} onClick={run}><Download /> Baixar Excel</button>
+      </>}>
+      <AudienceFields audience={audience} setAudience={setAudience} agendas={agendas} procedures={procedures} cadence={null} />
+    </Modal>
+  );
+}
+
 // Campaigns ("Disparos"): the super admin's mass sends, each to its own
 // webhook, at a set pace. See docs/WEBHOOKS.md for the JSON.
 export function CampaignsPage() {
@@ -471,6 +557,7 @@ export function CampaignsPage() {
   const { data: procedures = [] } = useLoad(() => must(supabase.from('procedures').select('id, name').eq('active', true).order('name')), []);
   const [editing, setEditing] = useState(null);
   const [viewing, setViewing] = useState(null);
+  const [exporting, setExporting] = useState(false);
   const sending = useMemo(() => campaigns.some((c) => c.status === 'enviando'), [campaigns]);
   useInterval(() => { if (sending) reload(); }, 10000);
 
@@ -482,6 +569,7 @@ export function CampaignsPage() {
           <div className="sub">Campanhas para a base de pacientes, cada uma com o seu webhook · só o super admin vê esta tela</div>
         </div>
         <div className="topbar-right">
+          <button type="button" className="btn" onClick={() => setExporting(true)}><Download /> Exportar base</button>
           <button type="button" className="btn btn-primary" onClick={() => setEditing('new')}><Plus /> Nova campanha</button>
         </div>
       </header>
@@ -496,6 +584,7 @@ export function CampaignsPage() {
           onClose={() => setEditing(null)} onSaved={() => { setEditing(null); reload(); }} />
       )}
       {viewing && <RecipientsModal campaign={viewing} onClose={() => setViewing(null)} onChanged={reload} />}
+      {exporting && <ExportModal agendas={agendas} procedures={procedures} onClose={() => setExporting(false)} />}
     </div>
   );
 }
