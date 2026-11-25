@@ -243,7 +243,7 @@ test('patients/contexto: history summary, procedures, pending returns and what i
   assert.equal((await call('pacientes/contexto', {})).body.erro.codigo, 'campo_obrigatorio');
 });
 
-test('a time that starts when a booking or block ends is free; the blocks come in the answer', async () => {
+test('a time that starts when a booking or block ends is free', async () => {
   const before = (await call('agenda/disponibilidade', { data: tuesday, agenda: 'depilacao' })).body.disponibilidade[0];
   const [, , x, , y] = before.detalhes; // two free times, apart
   const agenda = (await db.query(`select id from agendas where name = 'Depilação a laser'`)).rows[0].id;
@@ -266,7 +266,4 @@ test('a time that starts when a booking or block ends is free; the blocks come i
   const minus30 = (t) => { const [h, m] = t.split(':').map(Number); const v = h * 60 + m - 30; return `${String(Math.floor(v / 60)).padStart(2, '0')}:${String(v % 60).padStart(2, '0')}`; };
   assert.ok(!times.includes(minus30(x.inicio)), 'the booked time is gone');
   assert.ok(!times.includes(minus30(y.inicio)), 'the blocked time is gone');
-  assert.deepEqual(body.bloqueios.filter((b) => b.motivo === 'Exame'), [
-    { agenda: 'Depilação a laser', data: tuesday, inicio: minus30(y.inicio), data_fim: tuesday, fim: y.inicio, dia_inteiro: false, motivo: 'Exame' },
-  ]);
 });

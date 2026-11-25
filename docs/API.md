@@ -33,12 +33,6 @@ procedimentos (com o prazo de retorno em meses). Corpo vazio `{}`.
     "tipo_id": "...", "duracao_minutos": 20, "horarios": ["08:00", "08:20", "08:40"],
     "detalhes": [{ "inicio": "08:00", "fim": "08:20", "duracao_minutos": 20 }] } ] }
 ```
-A resposta também traz `bloqueios`: os bloqueios do período (da agenda pedida e os da clínica
-inteira), para entender por que um horário habitual não aparece.
-```json
-"bloqueios": [{ "agenda": "Simone Rezeck", "data": "2026-11-26", "inicio": "14:30",
-                "data_fim": "2026-11-26", "fim": "15:10", "dia_inteiro": false, "motivo": "exame mapa" }]
-```
 Um horário só deixa de aparecer quando **cruza** um agendamento ou bloqueio. Encostar não conta:
 um horário que começa às 10:00 continua livre se o agendamento ou bloqueio anterior termina às 10:00.
 
