@@ -242,3 +242,31 @@ test('patients/contexto: history summary, procedures, pending returns and what i
   assert.deepEqual([none.encontrado, none.total], [false, 0]);
   assert.equal((await call('pacientes/contexto', {})).body.erro.codigo, 'campo_obrigatorio');
 });
+
+test('a time that starts when a booking or block ends is free; the blocks come in the answer', async () => {
+  const before = (await call('agenda/disponibilidade', { data: tuesday, agenda: 'depilacao' })).body.disponibilidade[0];
+  const [, , x, , y] = before.detalhes; // two free times, apart
+  const agenda = (await db.query(`select id from agendas where name = 'Depilação a laser'`)).rows[0].id;
+  const patient = (await db.query(`insert into patients (full_name, phone) values ('Encosta Teste', '31911110000') returning id`)).rows[0].id;
+  // a booking that ends exactly when x starts, and a block that ends exactly when y starts
+  await db.query(
+    `insert into appointments (agenda_id, patient_id, starts_at, ends_at, status)
+     values ($1, $2, local_timestamp($3::date, $4::time) - interval '30 minutes', local_timestamp($3::date, $4::time), 'agendado')`,
+    [agenda, patient, tuesday, x.inicio],
+  );
+  await db.query(
+    `insert into agenda_blocks (agenda_id, starts_at, ends_at, reason)
+     values ($1, local_timestamp($2::date, $3::time) - interval '30 minutes', local_timestamp($2::date, $3::time), 'Exame')`,
+    [agenda, tuesday, y.inicio],
+  );
+  const { body } = await call('agenda/disponibilidade', { data: tuesday, agenda: 'depilacao' });
+  const times = body.disponibilidade[0].horarios;
+  assert.ok(times.includes(x.inicio), `${x.inicio} starts when the booking ends: free`);
+  assert.ok(times.includes(y.inicio), `${y.inicio} starts when the block ends: free`);
+  const minus30 = (t) => { const [h, m] = t.split(':').map(Number); const v = h * 60 + m - 30; return `${String(Math.floor(v / 60)).padStart(2, '0')}:${String(v % 60).padStart(2, '0')}`; };
+  assert.ok(!times.includes(minus30(x.inicio)), 'the booked time is gone');
+  assert.ok(!times.includes(minus30(y.inicio)), 'the blocked time is gone');
+  assert.deepEqual(body.bloqueios.filter((b) => b.motivo === 'Exame'), [
+    { agenda: 'Depilação a laser', data: tuesday, inicio: minus30(y.inicio), data_fim: tuesday, fim: y.inicio, dia_inteiro: false, motivo: 'Exame' },
+  ]);
+});

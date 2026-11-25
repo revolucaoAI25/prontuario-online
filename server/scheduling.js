@@ -282,10 +282,37 @@ export async function availability(body) {
     // Fixed-slot agendas have slots of different lengths.
     if (group.duracao_minutos !== row.duration) group.duracao_minutos = null;
   }
+  // The blocks in the period (that agenda's and the whole clinic's), so the
+  // caller can see why a usual time is not offered.
+  const agendaIds = [...new Set(targets.map(([id]) => id).filter(Boolean))];
+  const blocks = await query(
+    `select coalesce(a.name, 'Clínica inteira') as agenda,
+            to_char(b.starts_at at time zone '${TZ}', 'YYYY-MM-DD') as start_day,
+            to_char(b.starts_at at time zone '${TZ}', 'HH24:MI') as start_time,
+            to_char(b.ends_at at time zone '${TZ}', 'YYYY-MM-DD') as end_day,
+            to_char(b.ends_at at time zone '${TZ}', 'HH24:MI') as end_time,
+            b.reason
+     from agenda_blocks b
+     left join agendas a on a.id = b.agenda_id
+     where b.starts_at < local_timestamp($2::date + 1, '00:00')
+       and b.ends_at > local_timestamp($1::date, '00:00')
+       and (cardinality($3::uuid[]) = 0 or b.agenda_id is null or b.agenda_id = any ($3::uuid[]))
+     order by b.starts_at, a.sort_order`,
+    [from, to, agendaIds],
+  );
   return {
     periodo: { inicio: from, fim: to },
     tipo: type ? { nome: type.name } : null,
     disponibilidade: [...groups.values()],
+    bloqueios: blocks.rows.map((b) => ({
+      agenda: b.agenda,
+      data: b.start_day,
+      inicio: b.start_time,
+      data_fim: b.end_day,
+      fim: b.end_time,
+      dia_inteiro: b.start_time === '00:00' && b.end_time === '00:00',
+      motivo: b.reason ?? null,
+    })),
   };
 }
 
