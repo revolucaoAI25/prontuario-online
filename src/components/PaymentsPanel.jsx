@@ -101,7 +101,7 @@ export function PaymentsPanel({ patientId, appointmentId, agendaId }) {
         <div className="field"><label>Agenda</label>
           <select className="select" value={form.agenda_id} onChange={set('agenda_id')} disabled={Boolean(appointmentId) && !editingId}>
             {agendas.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
-            <option value={COUNTER}>Balcão (produto, sem agenda)</option>
+            <option value={COUNTER}>Produtos (venda de produto)</option>
           </select>
         </div>
         <div className="field"><label>Situação</label>
@@ -131,7 +131,7 @@ export function PaymentsPanel({ patientId, appointmentId, agendaId }) {
           <div key={p.id} className="side-item row">
             <div className="grow">
               <div style={{ fontWeight: 700 }}>{formatMoney(p.amount)} <span className="small muted">· {methodLabel(p.method)}{p.installments > 1 ? ` em ${p.installments}x` : ''}</span></div>
-              <div className="small muted">{formatDay(p.occurred_on)} · {agendaName(p.agenda_id) ?? 'Balcão'}{p.description ? ` · ${p.description}` : ''}</div>
+              <div className="small muted">{formatDay(p.occurred_on)} · {agendaName(p.agenda_id) ?? 'Produtos'}{p.description ? ` · ${p.description}` : ''}</div>
             </div>
             {p.status === 'pendente'
               ? <button type="button" className="btn btn-sm" onClick={() => markPaid(p)}><Check /> Marcar pago</button>

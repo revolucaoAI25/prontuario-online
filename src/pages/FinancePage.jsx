@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Check, ChevronLeft, ChevronRight, Lock, Pencil } from 'lucide-react';
+import { Check, ChevronLeft, ChevronRight, Lock, Pencil, Plus } from 'lucide-react';
 import { supabase, must } from '../lib/supabase.js';
 import { useLoad } from '../lib/hooks.js';
 import { useAuth } from '../context/AuthContext.jsx';
@@ -12,6 +12,7 @@ import { PaymentEditModal } from '../components/PaymentEditModal.jsx';
 import { ExpensesTab } from './finance/ExpensesTab.jsx';
 import { usePeriod } from './finance/period.jsx';
 import { FinanceGate } from './finance/FinanceGate.jsx';
+import { ProductSaleModal } from './finance/ProductSaleModal.jsx';
 
 const summaryFor = (from, to) => must(supabase.rpc('finance_summary', { p_from: from, p_to: to }));
 const paymentsFor = (from, to) => must(
@@ -19,6 +20,9 @@ const paymentsFor = (from, to) => must(
     .gte('occurred_on', from).lte('occurred_on', to)
     .order('occurred_on', { ascending: false }).order('created_at', { ascending: false }),
 );
+
+// Product sales: payments with no agenda.
+const PRODUCTS_COLOR = '#8b6fb5';
 
 function AgendaDot({ color }) {
   return <i className="dot-sw" style={{ background: color ?? 'var(--border-strong)' }} />;
@@ -32,8 +36,8 @@ function PaymentsTable({ rows, onMarkPaid, onEdit, showDay }) {
         {rows.map((p) => (
           <tr key={p.id}>
             {showDay && <td className="mono">{formatDay(p.occurred_on)}</td>}
-            <td><Link to={`/prontuario/${p.patient?.id}`}>{p.patient?.full_name}</Link></td>
-            <td style={{ whiteSpace: 'nowrap' }}><span className="row" style={{ gap: 7 }}><AgendaDot color={p.agenda?.color} />{p.agenda?.name ?? 'Balcão'}</span></td>
+            <td>{p.patient ? <Link to={`/prontuario/${p.patient.id}`}>{p.patient.full_name}</Link> : <span className="muted">Venda avulsa</span>}</td>
+            <td style={{ whiteSpace: 'nowrap' }}><span className="row" style={{ gap: 7 }}><AgendaDot color={p.agenda?.color ?? PRODUCTS_COLOR} />{p.agenda?.name ?? 'Produtos'}</span></td>
             <td>{p.description}</td>
             <td>{methodLabel(p.method)}{p.installments > 1 ? ` · ${p.installments}x` : ''}</td>
             <td className="num"><b>{formatMoney(p.amount)}</b></td>
@@ -72,11 +76,12 @@ function DailyClose() {
   const { data: expenses = [] } = useLoad(() => must(supabase.from('expenses').select('*').eq('occurred_on', day).order('created_at')), [day]);
   const markPaid = useMarkPaid(() => { reload(); reloadSummary(); });
   const [editing, setEditing] = useState(null);
+  const [selling, setSelling] = useState(false);
 
   const received = Number(summary?.total_pago ?? 0);
   const spent = Number(summary?.despesas_total ?? 0);
   const today = localDay();
-  const agendas = (summary?.por_agenda ?? []).filter((a) => a.agenda_id || Number(a.quantidade) > 0);
+  const agendas = summary?.por_agenda ?? [];
 
   return (
     <>
@@ -94,8 +99,11 @@ function DailyClose() {
           <button type="button" className={day === addDays(today, -1) ? 'active' : ''} onClick={() => setDay(addDays(today, -1))}>Ontem</button>
           <button type="button" className={day === today ? 'active' : ''} onClick={() => setDay(today)}>Hoje</button>
         </div>
+        <span className="grow" />
+        <button type="button" className="btn btn-primary" onClick={() => setSelling(true)}><Plus /> Lançar venda de produto</button>
       </div>
       <ReceptionNote />
+      {selling && <ProductSaleModal day={day} onClose={() => setSelling(false)} onSaved={() => { setSelling(false); reload(); reloadSummary(); }} />}
 
       <div className="kpis">
         <div className="card kpi"><div className="lbl">{isAdmin ? 'Recebido' : 'Recebido nas agendas liberadas'}</div><div className="val">{formatMoney(received)}</div></div>
@@ -119,6 +127,9 @@ function DailyClose() {
               <div className="close-forms">
                 {a.por_forma.map((f) => <div key={f.forma} className="row small"><span className="grow muted">{methodLabel(f.forma)}</span><span className="tnum">{formatMoney(f.total)}</span></div>)}
               </div>
+            )}
+            {!a.agenda_id && (
+              <button type="button" className="btn btn-sm" style={{ marginTop: 10, alignSelf: 'flex-start' }} onClick={() => setSelling(true)}><Plus /> Lançar venda</button>
             )}
           </div>
         ))}

@@ -31,6 +31,7 @@ export function PaymentEditModal({ payment, onClose, onSaved }) {
     const amount = parseMoney(form.amount);
     if (!(amount > 0)) return toast.error('Informe o valor.');
     if (form.status === 'pago' && !form.method) return toast.error('Escolha a forma de pagamento.');
+    if (!payment.patient_id && form.agenda_id) return toast.error('Uma venda sem paciente só pode ficar em Produtos.');
     setSaving(true);
     const values = {
       amount,
@@ -65,7 +66,7 @@ export function PaymentEditModal({ payment, onClose, onSaved }) {
         <button type="button" className="btn" onClick={onClose}>Cancelar</button>
         <button type="button" className="btn btn-primary" disabled={saving} onClick={save}>Salvar alteração</button>
       </>}>
-      {payment.patient?.full_name && <div className="small muted" style={{ marginBottom: 12 }}>{payment.patient.full_name}</div>}
+      <div className="small muted" style={{ marginBottom: 12 }}>{payment.patient?.full_name ?? 'Venda avulsa (sem paciente)'}</div>
       <div className="form-grid">
         <Field label="Valor (R$)"><input className="input" inputMode="decimal" autoFocus value={form.amount} onChange={set('amount')} placeholder="0,00" /></Field>
         <Field label="Forma de pagamento">
@@ -87,7 +88,7 @@ export function PaymentEditModal({ payment, onClose, onSaved }) {
           <select className="select" value={form.agenda_id} onChange={set('agenda_id')}>
             {agendas.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
             {form.agenda_id && !agendas.some((a) => a.id === form.agenda_id) && <option value={form.agenda_id}>{payment.agenda?.name ?? 'Agenda antiga'}</option>}
-            <option value="">Balcão (produto, sem agenda)</option>
+            <option value="">Produtos (venda de produto)</option>
           </select>
         </Field>
         <Field label="Descrição" full><input className="input" value={form.description} onChange={set('description')} placeholder="ex.: Botox" /></Field>

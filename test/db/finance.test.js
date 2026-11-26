@@ -75,11 +75,11 @@ test('the daily close: per agenda for the admin, shared agendas only for the rec
   assert.equal(Number(everson.pago), 1500);
   assert.equal(everson.atendimentos, 1);
   assert.equal(everson.por_forma[0].forma, 'cartao_credito');
-  assert.deepEqual(mine.por_agenda.map((a) => a.nome), ['Dr. Everson Rezeck', 'Simone Rezeck', 'Estética', 'Depilação a laser']);
+  assert.deepEqual(mine.por_agenda.map((a) => a.nome), ['Dr. Everson Rezeck', 'Simone Rezeck', 'Estética', 'Depilação a laser', 'Produtos']);
 
   const reception = await summary(secretaria);
   assert.equal(Number(reception.total_pago), 1360);
-  assert.deepEqual(reception.por_agenda.map((a) => a.nome), ['Simone Rezeck', 'Estética', 'Depilação a laser']);
+  assert.deepEqual(reception.por_agenda.map((a) => a.nome), ['Simone Rezeck', 'Estética', 'Depilação a laser', 'Produtos']);
   assert.ok(!JSON.stringify(reception).includes('1500'), 'the hidden total does not leave the database');
 
   await expectDbError(asUser(db, simone, () => db.query(`select finance_summary(clinic_today(), clinic_today())`)), 'acesso_negado');
@@ -103,13 +103,27 @@ test('an archived agenda shows up in the report only when it has money in the pe
   await db.query(`delete from payments where agenda_id = $1`, [old.id]);
 });
 
-test('a counter sale with no agenda is visible to the team', async () => {
-  await asUser(db, secretaria, () =>
-    db.query(`insert into payments (patient_id, amount, method, status, occurred_on, description) values ($1, 45, 'pix', 'pago', clinic_today() - 1, 'Sabonete')`, [patient]),
+test('product sales: their own "Produtos" card, always there; with or without a patient', async () => {
+  const day = (await one(db, `select (clinic_today() - 3)::text as d`)).d;
+  const empty = await asUser(db, secretaria, async () => (await one(db, `select finance_summary($1, $1) as s`, [day])).s);
+  const products = empty.por_agenda.at(-1);
+  assert.deepEqual([products.agenda_id, products.nome, Number(products.pago)], [null, 'Produtos', 0], 'shown even with no sale');
+
+  await asUser(db, secretaria, () => db.query(
+    `insert into payments (patient_id, amount, method, status, occurred_on, description) values ($1, 45, 'pix', 'pago', $2, 'Sabonete')`, [patient, day]));
+  // someone who only came to buy: no patient
+  await asUser(db, secretaria, () => db.query(
+    `insert into payments (patient_id, amount, method, status, occurred_on, description) values (null, 120, 'dinheiro', 'pago', $1, '2x Protetor solar')`, [day]));
+  const s = await asUser(db, secretaria, async () => (await one(db, `select finance_summary($1, $1) as s`, [day])).s);
+  assert.equal(Number(s.por_agenda.at(-1).pago), 165);
+  assert.equal(Number(s.por_agenda.at(-1).quantidade), 2);
+
+  // a payment of an agenda still needs its patient
+  await expectDbError(
+    asUser(db, secretaria, () => db.query(`insert into payments (patient_id, agenda_id, amount, method, status) values (null, $1, 50, 'pix', 'pago')`, [agenda.simone])),
+    'payments_patient_unless_product',
   );
-  const reception = await summary(secretaria);
-  assert.equal(reception.por_agenda.at(-1).nome, 'Sem agenda (balcão)');
-  assert.equal(Number(reception.por_agenda.at(-1).pago), 45);
+  await db.query(`delete from payments where occurred_on = $1`, [day]);
 });
 
 test('expenses: the reception records and edits them, only the admin deletes, professionals do not see them', async () => {
