@@ -1,7 +1,8 @@
 // What each webhook receives: one flat level of plain fields (text or
 // number), so tools like Chatflux and n8n can pick each one as a variable.
 // Dates are dd/mm/aaaa; a missing piece is an empty text. The same builders
-// serve the real sends and the "Enviar teste" buttons.
+// serve the real sends and the "Enviar teste" buttons. Every webhook carries
+// "imagem_url": the hosted image set for it (campaign or Integrações), or "".
 
 export const brDay = (iso) => (iso ? String(iso).slice(0, 10).split('-').reverse().join('/') : '');
 const daysSince = (iso) => (iso ? Math.max(0, Math.round((Date.now() - new Date(`${String(iso).slice(0, 10)}T12:00:00-03:00`)) / 86_400_000)) : '');
@@ -58,6 +59,7 @@ export function campaignPayload({ campaign, recipientId, attempt = 1, ctx, test 
     teste: test,
     campanha: campaign.name ?? '',
     mensagem: campaign.message ?? '',
+    imagem_url: campaign.imageUrl ?? '',
     envio_id: recipientId,
     tentativa: attempt,
     ...patient,
@@ -68,11 +70,12 @@ export function campaignPayload({ campaign, recipientId, attempt = 1, ctx, test 
 
 // A return reminder that is due. r: { id, attempts, procedure, months,
 // lastDay, daysSince, times, dueOn, notes, manual }.
-export function reminderPayload({ r, ctx, test = false }) {
+export function reminderPayload({ r, ctx, test = false, imageUrl = null }) {
   const { paciente_id: patientId, ...patient } = patientFields(ctx);
   return {
     tipo: 'lembrete_retorno',
     teste: test,
+    imagem_url: imageUrl ?? '',
     lembrete_id: r.id,
     tentativa: r.attempts ?? 1,
     procedimento: r.procedure ?? '',
@@ -89,11 +92,12 @@ export function reminderPayload({ r, ctx, test = false }) {
 }
 
 // Birthday, on the day. b: { id, attempts, birthDate, age }.
-export function birthdayPayload({ b, ctx, test = false }) {
+export function birthdayPayload({ b, ctx, test = false, imageUrl = null }) {
   const { paciente_id: patientId, ...patient } = patientFields(ctx);
   return {
     tipo: 'aniversario',
     teste: test,
+    imagem_url: imageUrl ?? '',
     mensagem_id: b.id,
     tentativa: b.attempts ?? 1,
     ...patient,
@@ -105,12 +109,13 @@ export function birthdayPayload({ b, ctx, test = false }) {
 
 // No-show. n: { id, attempts, minutesLate, appointment } where appointment
 // comes from formatAppointment().
-export function noShowPayload({ n, ctx, test = false }) {
+export function noShowPayload({ n, ctx, test = false, imageUrl = null }) {
   const { paciente_id: patientId, ...patient } = patientFields(ctx);
   const a = n.appointment ?? {};
   return {
     tipo: 'falta',
     teste: test,
+    imagem_url: imageUrl ?? '',
     alerta_id: n.id,
     tentativa: n.attempts ?? 1,
     agendamento_data: brDay(a.data),

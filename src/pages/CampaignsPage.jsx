@@ -5,7 +5,7 @@ import { useInterval, useLoad } from '../lib/hooks.js';
 import { useToast } from '../context/ToastContext.jsx';
 import { formatDay, formatDateTime, localDay } from '../lib/time.js';
 import { Empty, Field, Modal } from '../components/ui.jsx';
-import { WebhookTester } from '../components/WebhookTester.jsx';
+import { ImageUrlInput, WebhookTester, isImageUrl } from '../components/WebhookTester.jsx';
 import { buildXlsx, downloadBytes } from '../lib/xlsx.js';
 import { firstName, firstTwoNames, properName, whatsappDigits } from '../lib/names.js';
 import { PatientPicker } from '../components/PatientPicker.jsx';
@@ -234,7 +234,7 @@ function AudienceFields({ audience, setAudience, agendas, procedures, cadence })
 }
 
 const DEFAULTS = {
-  name: '', webhook_url: '', message: '', batch_size: 20, window_minutes: 60, gap_min_seconds: 30, gap_max_seconds: 60,
+  name: '', webhook_url: '', message: '', image_url: '', batch_size: 20, window_minutes: 60, gap_min_seconds: 30, gap_max_seconds: 60,
   hour_start: '08:00', hour_end: '20:00', weekdays: [1, 2, 3, 4, 5, 6],
 };
 
@@ -242,7 +242,7 @@ function TestModal({ c, onClose }) {
   return (
     <Modal title={`Testar webhook · ${c.name}`} onClose={onClose}>
       <div className="small muted" style={{ marginBottom: 10, overflowWrap: 'anywhere' }}>{c.webhook_url}</div>
-      <WebhookTester url={c.webhook_url} name={c.name} message={c.message} />
+      <WebhookTester url={c.webhook_url} name={c.name} message={c.message} imageUrl={c.image_url} />
     </Modal>
   );
 }
@@ -253,6 +253,7 @@ function CampaignEditor({ campaign, agendas, procedures, onClose, onSaved }) {
     ...DEFAULTS,
     ...(campaign ?? {}),
     message: campaign?.message ?? '',
+    image_url: campaign?.image_url ?? '',
     hour_start: (campaign?.hour_start ?? DEFAULTS.hour_start).slice(0, 5),
     hour_end: (campaign?.hour_end ?? DEFAULTS.hour_end).slice(0, 5),
   }));
@@ -268,6 +269,7 @@ function CampaignEditor({ campaign, agendas, procedures, onClose, onSaved }) {
   async function save(andStart) {
     if (!form.name.trim()) return toast.error('Dê um nome para a campanha.');
     if (!/^https:\/\//.test(form.webhook_url.trim())) return toast.error('O webhook precisa começar com https://');
+    if (form.image_url.trim() && !isImageUrl(form.image_url)) return toast.error('A URL da imagem precisa começar com https:// (sem espaços).');
     if (!(form.batch_size >= 1) || !(form.window_minutes >= 1)) return toast.error('Confira a cadência: mensagens e minutos.');
     if (form.gap_max_seconds < form.gap_min_seconds) return toast.error('O intervalo máximo precisa ser maior que o mínimo.');
     if (form.hour_end <= form.hour_start) return toast.error('O horário final precisa ser depois do inicial.');
@@ -276,7 +278,7 @@ function CampaignEditor({ campaign, agendas, procedures, onClose, onSaved }) {
     setSaving(true);
     try {
       const row = {
-        name: form.name.trim(), webhook_url: form.webhook_url.trim(), message: form.message.trim() || null,
+        name: form.name.trim(), webhook_url: form.webhook_url.trim(), message: form.message.trim() || null, image_url: form.image_url.trim() || null,
         batch_size: form.batch_size, window_minutes: form.window_minutes, gap_min_seconds: form.gap_min_seconds, gap_max_seconds: form.gap_max_seconds,
         hour_start: form.hour_start, hour_end: form.hour_end, weekdays: form.weekdays,
       };
@@ -325,8 +327,11 @@ function CampaignEditor({ campaign, agendas, procedures, onClose, onSaved }) {
             <Field label="Mensagem ou instrução (vai no JSON, opcional)" full>
               <textarea className="textarea" rows={3} value={form.message} onChange={(e) => set('message')(e.target.value)} placeholder="ex.: Oferta de Botox com 20% até 30/11. Convidar para avaliação." />
             </Field>
+            <Field label="Imagem (URL, opcional)" full hint='Endereço de uma imagem hospedada. Vai em cada envio como "imagem_url", para templates com imagem.'>
+              <ImageUrlInput value={form.image_url} onChange={set('image_url')} />
+            </Field>
             <Field label="Testar o webhook antes de disparar" full>
-              <WebhookTester url={form.webhook_url} name={form.name} message={form.message} />
+              <WebhookTester url={form.webhook_url} name={form.name} message={form.message} imageUrl={form.image_url} />
             </Field>
           </div>
         </section>
@@ -436,6 +441,7 @@ function CampaignCard({ c, onEdit, onRecipients, onChanged }) {
         <span className={`tag ${tone}`}>{label}</span>
       </div>
       {c.message && <div className="small muted" style={{ marginTop: 4 }}>{c.message}</div>}
+      {c.image_url && <div className="small muted" style={{ marginTop: 4, overflowWrap: 'anywhere' }}>Imagem: {c.image_url}</div>}
       <div className="meter" style={{ margin: '12px 0 6px' }}><div style={{ width: `${pct}%` }} /></div>
       <div className="row small" style={{ gap: 12, flexWrap: 'wrap' }}>
         <span><b>{c.enviados}</b> enviados</span>

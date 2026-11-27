@@ -84,6 +84,7 @@ test('nothing is sent while no webhook is configured', async () => {
 
 test('due reminders are posted once, signed, then marked as sent', async () => {
   await setting('reminder_webhook_url', receiverUrl);
+  await setting('reminder_image_url', 'https://cdn.exemplo.com/retorno.jpg');
   const patient = await dueTodayBotox('Lara Lembrete', '(31) 98765-1111');
   const { body } = await cron();
   const mine = received.filter((r) => r.body.paciente_id === patient);
@@ -92,6 +93,7 @@ test('due reminders are posted once, signed, then marked as sent', async () => {
   assert.equal(payload.tipo, 'lembrete_retorno');
   assert.ok(Object.values(payload).every((v) => ['string', 'number', 'boolean'].includes(typeof v)), 'flat: no nested objects');
   assert.equal(payload.teste, false);
+  assert.equal(payload.imagem_url, 'https://cdn.exemplo.com/retorno.jpg', 'the image set in Integrações');
   assert.equal(payload.procedimento, 'Botox');
   assert.equal(payload.primeiro_nome, 'Lara');
   assert.equal(payload.telefone, '5531987651111');
@@ -140,6 +142,7 @@ test('birthdays are posted with the age', async () => {
   await cron();
   const payload = received.find((r) => r.body.tipo === 'aniversario' && r.body.paciente_id === patient)?.body;
   assert.equal(payload.idade, 41);
+  assert.equal(payload.imagem_url, '', 'no image set: empty');
   assert.match(payload.data_nascimento, /^\d{2}\/\d{2}\/\d{4}$/);
   assert.equal(payload.telefone, '5531987653333');
   assert.equal(payload.primeiro_nome, 'Bia');
@@ -350,6 +353,7 @@ test('the no-show endpoint takes the cron secret or the database token, nothing 
 
 test('a patient not marked as arrived 2 hours after the booking is posted once', async () => {
   await setting('no_show_webhook_url', receiverUrl);
+  await setting('no_show_image_url', 'https://cdn.exemplo.com/falta.png');
   const patient = await createPatient(db, { name: 'Fabio Faltou', phone: '(31) 98765-4400' });
   const appt = await pastBooking(patient, { hoursAgo: 3, status: 'confirmado' });
   const { body } = await faltas();
@@ -359,6 +363,7 @@ test('a patient not marked as arrived 2 hours after the booking is posted once',
   const p = mine[0].body;
   assert.ok(Object.values(p).every((v) => ['string', 'number', 'boolean'].includes(typeof v)), 'flat: no nested objects');
   assert.equal(p.agendamento_id, appt);
+  assert.equal(p.imagem_url, 'https://cdn.exemplo.com/falta.png');
   assert.equal(p.agendamento_status, 'Confirmado pelo paciente');
   assert.equal(p.agendamento_agenda, 'Dr. Everson Rezeck');
   assert.match(p.agendamento_data, /^\d{2}\/\d{2}\/\d{4}$/);

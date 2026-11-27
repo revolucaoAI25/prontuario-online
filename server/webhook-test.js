@@ -33,19 +33,19 @@ function sampleContext(telefone) {
 
 const SAMPLES = {
   campanha: (ctx, body) => campaignPayload({
-    campaign: { id: ZERO(0), name: body.nome || 'Campanha de teste', message: body.mensagem || null },
+    campaign: { id: ZERO(0), name: body.nome || 'Campanha de teste', message: body.mensagem || null, imageUrl: body.imagem_url },
     recipientId: ZERO('f1'), ctx, test: true,
   }),
-  lembrete: (ctx) => reminderPayload({
-    ctx, test: true,
+  lembrete: (ctx, body) => reminderPayload({
+    ctx, test: true, imageUrl: body.imagem_url,
     r: { id: ZERO('d1'), procedure: 'Botox', months: 4, lastDay: daysAgo(150), daysSince: 150, times: 2, dueOn: daysAgo(30), notes: null, manual: false },
   }),
-  aniversario: (ctx) => birthdayPayload({
-    ctx, test: true,
+  aniversario: (ctx, body) => birthdayPayload({
+    ctx, test: true, imageUrl: body.imagem_url,
     b: { id: ZERO('e1'), birthDate: `1990-${new Date().toISOString().slice(5, 10)}`, age: new Date().getFullYear() - 1990 },
   }),
-  falta: (ctx) => noShowPayload({
-    ctx, test: true,
+  falta: (ctx, body) => noShowPayload({
+    ctx, test: true, imageUrl: body.imagem_url,
     n: {
       id: ZERO('a1'),
       minutesLate: 125,
@@ -57,7 +57,7 @@ const SAMPLES = {
   }),
 };
 
-// POST /api/admin/testar_webhook { tipo, url, telefone?, nome?, mensagem? }
+// POST /api/admin/testar_webhook { tipo, url, telefone?, nome?, mensagem?, imagem_url? }
 export async function testWebhook(body, _req, staff) {
   if (!staff.is_superadmin) throw new ApiError(403, 'acesso_negado', 'Apenas o super admin testa webhooks.');
   const build = SAMPLES[body.tipo ?? 'campanha'];
@@ -66,6 +66,10 @@ export async function testWebhook(body, _req, staff) {
   if (!/^https?:\/\/[^\s]+$/.test(url)) throw new ApiError(400, 'campo_invalido', 'Informe o endereço do webhook (https://...).', { campo: 'url' });
   if (body.telefone && !whatsappNumber(body.telefone)) {
     throw new ApiError(400, 'campo_invalido', 'Telefone inválido para WhatsApp.', { campo: 'telefone' });
+  }
+  body.imagem_url = String(body.imagem_url ?? '').trim();
+  if (body.imagem_url && !/^https?:\/\/\S+$/.test(body.imagem_url)) {
+    throw new ApiError(400, 'campo_invalido', 'A URL da imagem precisa começar com https://', { campo: 'imagem_url' });
   }
   const payload = build(sampleContext(body.telefone), body);
   // campaigns wait up to 30 s; the daily webhooks 10 s, as in a real send

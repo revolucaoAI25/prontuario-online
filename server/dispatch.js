@@ -111,9 +111,10 @@ async function reminderExtras(rows) {
   return { contexts, details: new Map(details.rows.map((r) => [r.id, r])) };
 }
 
-function reminderToPayload(row, { contexts, details }) {
+function reminderToPayload(row, { contexts, details }, imageUrl) {
   const d = details.get(row.reminder_id) ?? {};
   return reminderPayload({
+    imageUrl,
     ctx: contexts.get(row.patient_id),
     r: {
       id: row.reminder_id, attempts: row.attempts, procedure: row.procedure_name, months: d.months,
@@ -123,7 +124,7 @@ function reminderToPayload(row, { contexts, details }) {
 }
 
 export async function dispatchReminders({ deadline = Date.now() + 25_000 } = {}) {
-  const url = await settingUrl('reminder_webhook_url');
+  const [url, imageUrl] = await Promise.all([settingUrl('reminder_webhook_url'), settingUrl('reminder_image_url')]);
   if (!url) return { configurado: false };
   return {
     configurado: true,
@@ -134,13 +135,13 @@ export async function dispatchReminders({ deadline = Date.now() + 25_000 } = {})
       markSent: `select mark_reminder_sent($1)`,
       markFailed: `select mark_reminder_failed($1, $2)`,
       enrich: reminderExtras,
-      toPayload: reminderToPayload,
+      toPayload: (row, extras) => reminderToPayload(row, extras, imageUrl),
     })),
   };
 }
 
 export async function dispatchBirthdays({ deadline = Date.now() + 25_000 } = {}) {
-  const url = await settingUrl('birthday_webhook_url');
+  const [url, imageUrl] = await Promise.all([settingUrl('birthday_webhook_url'), settingUrl('birthday_image_url')]);
   if (!url) return { configurado: false };
   return {
     configurado: true,
@@ -152,6 +153,7 @@ export async function dispatchBirthdays({ deadline = Date.now() + 25_000 } = {})
       markFailed: `select mark_birthday_failed($1, $2)`,
       enrich: async (rows) => ({ contexts: await patientContexts(rows.map((r) => r.patient_id)) }),
       toPayload: (row, { contexts }) => birthdayPayload({
+        imageUrl,
         ctx: contexts.get(row.patient_id),
         b: { id: row.message_id, attempts: row.attempts, birthDate: row.birth_date, age: row.age },
       }),
@@ -169,16 +171,17 @@ async function noShowExtras(rows) {
   return { contexts, appts: new Map(appts.rows.map((r) => [r.id, r])) };
 }
 
-function noShowToPayload(row, { contexts, appts }) {
+function noShowToPayload(row, { contexts, appts }, imageUrl) {
   const { paciente, ...appointment } = formatAppointment(appts.get(row.appointment_id));
   return noShowPayload({
+    imageUrl,
     ctx: contexts.get(row.patient_id),
     n: { id: row.alert_id, attempts: row.attempts, minutesLate: row.minutes_late, appointment },
   });
 }
 
 export async function dispatchNoShows({ deadline = Date.now() + 25_000 } = {}) {
-  const url = await settingUrl('no_show_webhook_url');
+  const [url, imageUrl] = await Promise.all([settingUrl('no_show_webhook_url'), settingUrl('no_show_image_url')]);
   if (!url) return { configurado: false };
   return {
     configurado: true,
@@ -189,7 +192,7 @@ export async function dispatchNoShows({ deadline = Date.now() + 25_000 } = {}) {
       markSent: `select mark_no_show_sent($1)`,
       markFailed: `select mark_no_show_failed($1, $2)`,
       enrich: noShowExtras,
-      toPayload: noShowToPayload,
+      toPayload: (row, extras) => noShowToPayload(row, extras, imageUrl),
     })),
   };
 }
@@ -210,13 +213,19 @@ export async function dispatchCampaigns({ deadline = Date.now() + 50_000 } = {})
   while (Date.now() < deadline) {
     const { rows } = await query(`select * from claim_campaign_messages()`);
     if (rows.length === 0) break;
-    const contexts = await patientContexts(rows.map((r) => r.patient_id));
+    const [contexts, images] = await Promise.all([
+      patientContexts(rows.map((r) => r.patient_id)),
+      // (an image never holds a send back: before the column exists, none)
+      query(`select id, image_url from campaigns where id = any($1::uuid[])`, [[...new Set(rows.map((r) => r.campaign_id))]])
+        .catch(() => ({ rows: [] })),
+    ]);
+    const imageOf = new Map(images.rows.map((c) => [c.id, c.image_url]));
     await inPool(rows, async (row) => {
       const ctx = contexts.get(row.patient_id);
       try {
         if (!ctx) throw new Error('paciente não encontrado');
         await postWebhook(row.webhook_url, campaignPayload({
-          campaign: { id: row.campaign_id, name: row.campaign_name, message: row.campaign_message },
+          campaign: { id: row.campaign_id, name: row.campaign_name, message: row.campaign_message, imageUrl: imageOf.get(row.campaign_id) },
           recipientId: row.recipient_id,
           attempt: row.attempts,
           ctx,

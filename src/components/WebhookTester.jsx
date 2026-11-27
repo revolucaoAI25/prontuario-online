@@ -1,12 +1,13 @@
-import { useState } from 'react';
-import { CheckCircle2, Send, XCircle } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { CheckCircle2, ImageOff, Send, XCircle } from 'lucide-react';
 import { callApi } from '../lib/supabase.js';
 
 // "Enviar teste": the webhook gets the same JSON as a real send, with a
 // made-up patient and "teste": true; optionally your phone, to see the
 // message arrive. Shows what came back and what was sent. tipo: campanha,
-// lembrete, aniversario or falta (super admin only).
-export function WebhookTester({ url, tipo = 'campanha', name, message, compact = false }) {
+// lembrete, aniversario or falta (super admin only). imageUrl goes as
+// "imagem_url", as in a real send.
+export function WebhookTester({ url, tipo = 'campanha', name, message, imageUrl, compact = false }) {
   const [phone, setPhone] = useState('');
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState(null);
@@ -16,7 +17,9 @@ export function WebhookTester({ url, tipo = 'campanha', name, message, compact =
     setBusy(true);
     setResult(null);
     try {
-      setResult(await callApi('admin/testar_webhook', { tipo, url: url.trim(), nome: name, mensagem: message, telefone: phone.trim() || undefined }));
+      setResult(await callApi('admin/testar_webhook', {
+        tipo, url: url.trim(), nome: name, mensagem: message, imagem_url: imageUrl?.trim() || undefined, telefone: phone.trim() || undefined,
+      }));
     } catch (error) {
       setResult({ recebido: false, erro: error.message });
     } finally {
@@ -59,6 +62,24 @@ export function WebhookTester({ url, tipo = 'campanha', name, message, compact =
           {showJson && result.enviado && <pre className="webhook-pre">{JSON.stringify(result.enviado, null, 2)}</pre>}
         </div>
       )}
+    </div>
+  );
+}
+
+export const isImageUrl = (value) => /^https?:\/\/\S+$/.test(String(value ?? '').trim());
+
+// The address of a hosted image (sent as "imagem_url"), with a preview so a
+// wrong link shows up before sending.
+export function ImageUrlInput({ value, onChange }) {
+  const url = String(value ?? '').trim();
+  const [broken, setBroken] = useState(false);
+  useEffect(() => setBroken(false), [url]);
+  return (
+    <div className="image-url-input">
+      <input className="input" value={value ?? ''} onChange={(e) => onChange(e.target.value)} inputMode="url" placeholder="https://.../imagem.jpg" />
+      {isImageUrl(url) && (broken
+        ? <div className="small image-url-broken"><ImageOff /> Não foi possível abrir essa imagem. Confira se o link é público e aponta direto para a imagem.</div>
+        : <a href={url} target="_blank" rel="noreferrer" className="image-url-preview"><img src={url} alt="Prévia da imagem" onError={() => setBroken(true)} /></a>)}
     </div>
   );
 }

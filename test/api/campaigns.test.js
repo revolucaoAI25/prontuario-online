@@ -133,6 +133,7 @@ test('recipients: the filter minus exclusions plus inclusions; only drafts can c
 
 test('the pace: a batch per window, then it waits for the next window', async () => {
   const c = await newCampaign({ name: 'Ritmo', batch: 2, window: 60, gapMin: 0, gapMax: 0 });
+  await db.query(`update campaigns set image_url = 'https://cdn.exemplo.com/ritmo.jpg' where id = $1`, [c.id]);
   for (const n of ['Ivo', 'Jo', 'Lu']) await createPatient(db, { name: `${n} Ritmo`, phone: `(31) 98000-01${n.length}${n.charCodeAt(0) % 10}` });
   assert.equal(await fill(c.id, { busca: 'Ritmo' }), 3);
   await start(c.id);
@@ -143,6 +144,7 @@ test('the pace: a batch per window, then it waits for the next window', async ()
   assert.equal(p.tipo, 'campanha');
   assert.equal(p.campanha, 'Ritmo');
   assert.equal(p.mensagem, 'Oferta de novembro');
+  assert.equal(p.imagem_url, 'https://cdn.exemplo.com/ritmo.jpg', 'the campaign image');
   assert.match(p.telefone, /^55319800001/);
   assert.match(p.nome, / Ritmo$/);
   assert.equal(p.tentativa, 1);
@@ -278,7 +280,7 @@ test('"Enviar teste": the webhook gets a made-up patient with teste: true; only 
   const sent = received.at(-1);
   // one flat level: every field is text or a number
   assert.deepEqual(Object.keys(sent), [
-    'tipo', 'teste', 'campanha', 'mensagem', 'envio_id', 'tentativa', 'nome', 'primeiro_nome', 'telefone', 'idade',
+    'tipo', 'teste', 'campanha', 'mensagem', 'imagem_url', 'envio_id', 'tentativa', 'nome', 'primeiro_nome', 'telefone', 'idade',
     'ultima_visita', 'dias_desde_ultima_visita', 'ultima_visita_agenda', 'ultima_visita_procedimentos', 'total_visitas',
     'procedimentos_realizados', 'retornos_pendentes', 'proximo_agendamento', 'resumo', 'paciente_id', 'campanha_id',
   ]);
@@ -286,13 +288,16 @@ test('"Enviar teste": the webhook gets a made-up patient with teste: true; only 
   assert.equal(sent.teste, true);
   assert.equal(sent.campanha, 'Black Friday');
   assert.equal(sent.mensagem, 'Oferta');
+  assert.equal(sent.imagem_url, '', 'no image: empty');
   assert.equal(sent.telefone, '5531999991234', 'your phone, to see it arrive');
   assert.equal(sent.ultima_visita_procedimentos, 'Botox');
   assert.match(sent.ultima_visita, /^\d{2}\/\d{2}\/\d{4}$/);
   assert.match(sent.resumo, /^Paciente Teste da Silva, 36 anos\. 3 visita\(s\); a última em/);
 
-  const fictitious = await testCampaignWebhook({ url: hookUrl }, null, await staff(superadmin));
+  const fictitious = await testCampaignWebhook({ url: hookUrl, imagem_url: ' https://cdn.exemplo.com/bf.jpg ' }, null, await staff(superadmin));
   assert.equal(fictitious.enviado.telefone, '5531900000000');
+  assert.equal(received.at(-1).imagem_url, 'https://cdn.exemplo.com/bf.jpg', 'the image goes in the test too');
+  await assert.rejects(testCampaignWebhook({ url: hookUrl, imagem_url: 'imagem.jpg' }, null, await staff(superadmin)), /imagem/);
 
   failNext = 1;
   const failed = await testCampaignWebhook({ url: hookUrl }, null, await staff(superadmin));
@@ -311,21 +316,24 @@ test('"Enviar teste" for the reminder, birthday and no-show webhooks: same flat 
   const me = await one(db, `select * from staff where id = $1`, [superadmin]);
   const flat = (o) => Object.values(o).every((v) => ['string', 'number', 'boolean'].includes(typeof v));
 
-  const lembrete = await testWebhook({ tipo: 'lembrete', url: hookUrl, telefone: '31999991234' }, null, me);
+  const lembrete = await testWebhook({ tipo: 'lembrete', url: hookUrl, telefone: '31999991234', imagem_url: 'https://cdn.exemplo.com/retorno.png' }, null, me);
   assert.equal(lembrete.recebido, true);
   let sent = received.at(-1);
+  assert.equal(sent.imagem_url, 'https://cdn.exemplo.com/retorno.png');
   assert.deepEqual([sent.tipo, sent.teste, sent.procedimento, sent.telefone], ['lembrete_retorno', true, 'Botox', '5531999991234']);
   assert.match(sent.data_retorno_prevista, /^\d{2}\/\d{2}\/\d{4}$/);
   assert.ok(flat(sent));
 
-  await testWebhook({ tipo: 'aniversario', url: hookUrl }, null, me);
+  await testWebhook({ tipo: 'aniversario', url: hookUrl, imagem_url: 'https://cdn.exemplo.com/parabens.png' }, null, me);
   sent = received.at(-1);
+  assert.equal(sent.imagem_url, 'https://cdn.exemplo.com/parabens.png');
   assert.deepEqual([sent.tipo, sent.teste, sent.telefone], ['aniversario', true, '5531900000000']);
   assert.equal(sent.data_nascimento.slice(0, 5), new Date().toISOString().slice(5, 10).split('-').reverse().join('/'), 'born today');
   assert.ok(flat(sent));
 
   await testWebhook({ tipo: 'falta', url: hookUrl }, null, me);
   sent = received.at(-1);
+  assert.equal(sent.imagem_url, '');
   assert.deepEqual([sent.tipo, sent.teste, sent.agendamento_agenda, sent.minutos_desde_o_horario], ['falta', true, 'Dr. Everson Rezeck', 125]);
   assert.ok(flat(sent));
 

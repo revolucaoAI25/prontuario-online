@@ -3,7 +3,7 @@ import { supabase, must } from '../../lib/supabase.js';
 import { useLoad } from '../../lib/hooks.js';
 import { useToast } from '../../context/ToastContext.jsx';
 import { Field } from '../../components/ui.jsx';
-import { WebhookTester } from '../../components/WebhookTester.jsx';
+import { ImageUrlInput, WebhookTester, isImageUrl } from '../../components/WebhookTester.jsx';
 
 function useSettings(keys) {
   const toast = useToast();
@@ -22,7 +22,8 @@ function useSettings(keys) {
     }
   }
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
-  return { form, set, save, toast };
+  const setValue = (k) => (v) => setForm({ ...form, [k]: v });
+  return { form, set, setValue, save, toast };
 }
 
 // Return periods: the clinic's admin.
@@ -56,9 +57,12 @@ export function RemindersTab() {
 
 // Webhooks and the API: the agency's super admin.
 const HOOKS = ['reminder_webhook_url', 'birthday_webhook_url', 'no_show_webhook_url'];
+// The image each one carries as "imagem_url" (optional).
+const IMAGES = ['reminder_image_url', 'birthday_image_url', 'no_show_image_url'];
+const IMAGE_HINT = 'Opcional. Endereço de uma imagem hospedada (https://…). Vai em todo envio como "imagem_url", para templates com imagem.';
 
 export function IntegrationsTab() {
-  const { form, set, save, toast } = useSettings([...HOOKS, 'no_show_delay_minutes', 'app_url']);
+  const { form, set, setValue, save, toast } = useSettings([...HOOKS, ...IMAGES, 'no_show_delay_minutes', 'app_url']);
   if (!form) return null;
   const origin = window.location.origin;
 
@@ -66,10 +70,14 @@ export function IntegrationsTab() {
     for (const key of HOOKS) {
       if (form[key] && !/^https:\/\//.test(form[key])) return toast.error('Os webhooks precisam começar com https://');
     }
+    for (const key of IMAGES) {
+      if (form[key]?.trim() && !isImageUrl(form[key])) return toast.error('A URL da imagem precisa começar com https:// (sem espaços).');
+    }
     const hours = Number(String(form.no_show_hours ?? Number(form.no_show_delay_minutes || 120) / 60).replace(',', '.'));
     if (!(hours >= 0.5 && hours <= 12)) return toast.error('O aviso de falta deve sair entre 0,5 e 12 horas depois do horário.');
     return save([
       ...HOOKS.map((key) => ({ key, value: form[key] || '' })),
+      ...IMAGES.map((key) => ({ key, value: form[key]?.trim() || '' })),
       { key: 'no_show_delay_minutes', value: Math.round(hours * 60) },
       // The database job calls this address (…/api/cron/faltas). Saved from
       // the address the super admin is using, so it follows a domain change.
@@ -87,18 +95,27 @@ export function IntegrationsTab() {
         <div className="form-grid">
           <Field label="Webhook dos lembretes" full hint="Recebe um POST por lembrete devido (uma vez por dia). Formato em docs/WEBHOOKS.md.">
             <input className="input" value={form.reminder_webhook_url} onChange={set('reminder_webhook_url')} placeholder="https://..." />
-            {/^https?:\/\//.test(form.reminder_webhook_url ?? '') && <div style={{ marginTop: 8 }}><WebhookTester url={form.reminder_webhook_url} tipo="lembrete" compact /></div>}
+          </Field>
+          <Field label="Imagem dos lembretes (URL)" full hint={IMAGE_HINT}>
+            <ImageUrlInput value={form.reminder_image_url} onChange={setValue('reminder_image_url')} />
+            {/^https?:\/\//.test(form.reminder_webhook_url ?? '') && <div style={{ marginTop: 8 }}><WebhookTester url={form.reminder_webhook_url} imageUrl={form.reminder_image_url} tipo="lembrete" compact /></div>}
           </Field>
           <Field label="Webhook de aniversário" full hint="Recebe um POST por aniversariante, no dia.">
             <input className="input" value={form.birthday_webhook_url} onChange={set('birthday_webhook_url')} placeholder="https://..." />
-            {/^https?:\/\//.test(form.birthday_webhook_url ?? '') && <div style={{ marginTop: 8 }}><WebhookTester url={form.birthday_webhook_url} tipo="aniversario" compact /></div>}
+          </Field>
+          <Field label="Imagem de aniversário (URL)" full hint={IMAGE_HINT}>
+            <ImageUrlInput value={form.birthday_image_url} onChange={setValue('birthday_image_url')} />
+            {/^https?:\/\//.test(form.birthday_webhook_url ?? '') && <div style={{ marginTop: 8 }}><WebhookTester url={form.birthday_webhook_url} imageUrl={form.birthday_image_url} tipo="aniversario" compact /></div>}
           </Field>
           <Field label="Webhook de falta" hint="Recebe um POST quando o paciente não foi marcado como “Chegou” depois do tempo ao lado. Uma vez por agendamento.">
             <input className="input" value={form.no_show_webhook_url} onChange={set('no_show_webhook_url')} placeholder="https://..." />
-            {/^https?:\/\//.test(form.no_show_webhook_url ?? '') && <div style={{ marginTop: 8 }}><WebhookTester url={form.no_show_webhook_url} tipo="falta" compact /></div>}
           </Field>
           <Field label="Avisar a falta depois de (horas)" hint="Contado a partir do horário marcado. Padrão: 2 horas.">
             <input className="input" inputMode="decimal" value={hours} onChange={set('no_show_hours')} />
+          </Field>
+          <Field label="Imagem de falta (URL)" full hint={IMAGE_HINT}>
+            <ImageUrlInput value={form.no_show_image_url} onChange={setValue('no_show_image_url')} />
+            {/^https?:\/\//.test(form.no_show_webhook_url ?? '') && <div style={{ marginTop: 8 }}><WebhookTester url={form.no_show_webhook_url} imageUrl={form.no_show_image_url} tipo="falta" compact /></div>}
           </Field>
         </div>
         <button type="button" className="btn btn-primary" onClick={submit}>Salvar</button>

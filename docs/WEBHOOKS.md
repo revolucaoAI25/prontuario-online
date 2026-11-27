@@ -17,7 +17,8 @@ a mensagem. O webhook de **falta** (paciente que não chegou) sai ao longo do di
 Todos os webhooks mandam **um nível só**, com texto ou número em cada campo (fácil de usar como
 variável no Chatflux/n8n). Datas em dd/mm/aaaa; o que não existe vem como texto vazio. Todos trazem
 `"teste": false` (o botão **Enviar teste**, ao lado de cada webhook em Ajustes → Integrações, manda o
-mesmo JSON com um paciente fictício e `"teste": true`) e os campos do paciente:
+mesmo JSON com um paciente fictício e `"teste": true`) e o campo `imagem_url` (veja abaixo), além
+dos campos do paciente:
 
 | Campo | O que é |
 |---|---|
@@ -32,6 +33,11 @@ mesmo JSON com um paciente fictício e `"teste": true`) e os campos do paciente:
 | `proximo_agendamento` | o próximo horário marcado (`dd/mm/aaaa às hh:mm · Agenda`) ou vazio |
 | `resumo` | tudo isso em poucas frases, pronto para a IA |
 | `paciente_id` | id do paciente no sistema |
+
+**Imagem (`imagem_url`):** endereço de uma imagem hospedada, para usar em templates com imagem
+(Chatflux etc.). Nos lembretes, no aniversário e na falta, é o campo "Imagem … (URL)" ao lado de cada
+webhook em Ajustes → Integrações; nos Disparos, o campo "Imagem" de cada campanha. Sem imagem, vem
+`"imagem_url": ""`. O "Enviar teste" leva a imagem que estiver no campo, mesmo antes de salvar.
 
 ## Lembrete de retorno
 
@@ -49,6 +55,7 @@ mesmo JSON com um paciente fictício e `"teste": true`) e os campos do paciente:
 {
   "tipo": "lembrete_retorno",
   "teste": false,
+  "imagem_url": "https://…/retorno.jpg",
   "lembrete_id": "…",
   "tentativa": 1,
   "procedimento": "Limpeza de pele",
@@ -86,6 +93,7 @@ identificam o envio.
 {
   "tipo": "aniversario",
   "teste": false,
+  "imagem_url": "https://…/parabens.jpg",
   "mensagem_id": "…",
   "tentativa": 1,
   "nome": "Vanessa Pereira Fonseca",
@@ -147,6 +155,7 @@ Falhas: nova tentativa em 10, 20, 40 e 80 minutos (5 no total) — a mesma regra
 {
   "tipo": "falta",
   "teste": false,
+  "imagem_url": "",
   "alerta_id": "…",
   "tentativa": 1,
   "agendamento_data": "17/11/2026",
@@ -193,6 +202,8 @@ a mensagem.
   minutos, 30–60 s entre elas, das 9h às 19h, de segunda a sábado.
 - Iniciar, pausar, retomar e cancelar a qualquer momento. "Ver envios" mostra quem já recebeu, quem está
   na fila e os erros; dá para tirar alguém da fila.
+- **Imagem (opcional):** o endereço de uma imagem hospedada vai em cada envio como `imagem_url`
+  (vazio quando não há).
 - **Testar antes:** "Enviar teste" (na campanha ou no cartão dela) manda o mesmo JSON com um paciente
   fictício e `"teste": true`; com o seu telefone no campo opcional, a mensagem chega para você. A tela
   mostra o que o webhook respondeu e em quanto tempo.
@@ -212,6 +223,7 @@ dd/mm/aaaa; o que não existe vem como texto vazio.
   "teste": false,
   "campanha": "Black Friday",
   "mensagem": "Botox com 20% até 30/11",
+  "imagem_url": "https://…/black-friday.jpg",
   "envio_id": "…",
   "tentativa": 1,
   "nome": "Vanessa Pereira Fonseca",
